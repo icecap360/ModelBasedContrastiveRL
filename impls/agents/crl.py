@@ -8,7 +8,8 @@ import optax
 from utils.encoders import GCEncoder, encoder_modules
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.networks import GCActor, GCBilinearValue, GCDiscreteActor, GCDiscreteBilinearCritic
-
+from utils.model_based import GCBilinearModelBasedValue, ModelBasedEncoder
+import flax.linen as nn
 
 class CRLAgent(flax.struct.PyTreeNode):
     """Contrastive RL (CRL) agent.
@@ -39,6 +40,7 @@ class CRLAgent(flax.struct.PyTreeNode):
         if len(phi.shape) == 2:  # Non-ensemble.
             phi = phi[None, ...]
             psi = psi[None, ...]
+
         logits = jnp.einsum('eik,ejk->ije', phi, psi) / jnp.sqrt(phi.shape[-1])
         # logits.shape is (B, B, e) with one term for positive pair and (B - 1) terms for negative pairs in each row.
         I = jnp.eye(batch_size)
@@ -204,6 +206,7 @@ class CRLAgent(flax.struct.PyTreeNode):
         ex_observations,
         ex_actions,
         config,
+        ex_batch=None
     ):
         """Create a new agent.
 
@@ -301,7 +304,6 @@ class CRLAgent(flax.struct.PyTreeNode):
 
         return cls(rng, network=network, config=flax.core.FrozenDict(**config))
 
-
 def get_config():
     config = ml_collections.ConfigDict(
         dict(
@@ -334,5 +336,76 @@ def get_config():
             p_aug=0.0,  # Probability of applying image augmentation.
             frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
         )
-    )
+    )   
     return config
+
+''' CODE FOR SIGLIP
+
+        # Compute raw logits (similarity)
+        logits = jnp.einsum('eik,ejk->ije', l2_normalize_vector(phi), l2_normalize_vector(psi)) # / jnp.sqrt(phi.shape[-1])
+        # logits.shape == (B, B, e)
+
+        # Read learnable SigLIP parameters from grad_params
+        bias =  self.network.params['modules_contrastive_params']['bias']  # shape ()
+        temp =  self.network.params['modules_contrastive_params']['temperature']  # shape ()
+
+        # Apply bias and temperature: (logits + b) / t
+        # logits = (logits + bias) / jnp.exp(temp)
+        logits = logits * jnp.exp(temp) + bias
+
+        # Create paired label signs: +1 for positive (i==j), -1 otherwise
+        I = jnp.eye(batch_size)
+        label_sign = 2 * I - 1  # +1 on diag, -1 off-diag
+
+        # Combine sign with logits for binary classification: z*score
+        signed_logits = logits * label_sign[..., None]
+
+        # Use sigmoid binary cross-entropy with positive label = +1
+        # We want -log sigmoid(signed_logits) => label=1 for all entries
+        # ones = jnp.ones_like(signed_logits)
+        # loss_terms = optax.sigmoid_binary_cross_entropy(logits=signed_logits, labels=ones)
+        loss_terms = nn.log_sigmoid(signed_logits)
+        contrastive_loss = jnp.mean(loss_terms)
+
+        # Compute statistics on mean over ensemble
+        logits_mean = jnp.mean(logits, axis=-1)
+        correct = jnp.argmax(logits_mean, axis=1) == jnp.arange(batch_size)
+        logits_pos = jnp.sum(logits_mean * I) / jnp.sum(I)
+        logits_neg = jnp.sum(logits_mean * (1 - I)) / jnp.sum(1 - I)
+
+        info = {
+            'contrastive_loss': contrastive_loss,
+            'v_mean': v.mean(),
+            'v_max': v.max(),
+            'v_min': v.min(),
+            'binary_accuracy': jnp.mean((logits_mean > 0) == I),
+            'categorical_accuracy': jnp.mean(correct),
+            'logits_pos': logits_pos,
+            'logits_neg': logits_neg,
+            'logits': logits_mean.mean(),
+        }
+        return contrastive_loss, info
+
+def l2_normalize_vector(vector):
+  """
+  L2 normalizes a vector in JAX.
+
+  Args:
+    vector: A JAX array representing the vector.
+
+  Returns:
+    A JAX array representing the L2-normalized vector.
+  """
+  # Calculate the L2 norm
+  l2_norm = jnp.linalg.norm(vector, axis=-1)
+
+  # Handle the case where the L2 norm is zero to avoid division by zero.
+  # If the norm is zero, the vector is a zero vector, and its normalized form
+  # is typically considered to be the zero vector itself, or handled based on context.
+  # Here, we'll return the original vector if the norm is zero.
+  # A more robust approach for deep learning might involve adding a small epsilon.
+  normalized_vector = jnp.where(jnp.expand_dims(l2_norm, -1) == 0, vector, vector / jnp.expand_dims(l2_norm, -1))
+
+  return normalized_vector
+
+        '''

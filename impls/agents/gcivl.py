@@ -153,6 +153,7 @@ class GCIVLAgent(flax.struct.PyTreeNode):
         ex_observations,
         ex_actions,
         config,
+        ex_batch=None,
     ):
         """Create a new agent.
 

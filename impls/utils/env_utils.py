@@ -57,7 +57,7 @@ class FrameStackWrapper(gymnasium.Wrapper):
         super().__init__(env)
 
         self.num_stack = num_stack
-        self.frames = collections.deque(maxlen=num_stack)
+        self.frames = collections.deque(maxlen=num_stack)   
 
         low = np.concatenate([self.observation_space.low] * num_stack, axis=-1)
         high = np.concatenate([self.observation_space.high] * num_stack, axis=-1)
@@ -81,7 +81,7 @@ class FrameStackWrapper(gymnasium.Wrapper):
         return self.get_observation(), reward, terminated, truncated, info
 
 
-def make_env_and_datasets(dataset_name, frame_stack=None):
+def make_env_and_datasets(dataset_name, dataset_dir, frame_stack=None):
     """Make OGBench environment and datasets.
 
     Args:
@@ -92,7 +92,7 @@ def make_env_and_datasets(dataset_name, frame_stack=None):
         A tuple of the environment, training dataset, and validation dataset.
     """
     # Use compact dataset to save memory.
-    env, train_dataset, val_dataset = ogbench.make_env_and_datasets(dataset_name, compact_dataset=True)
+    env, train_dataset, val_dataset = ogbench.make_env_and_datasets(dataset_name,dataset_dir=dataset_dir, compact_dataset=True)
     train_dataset = Dataset.create(**train_dataset)
     val_dataset = Dataset.create(**val_dataset)
 

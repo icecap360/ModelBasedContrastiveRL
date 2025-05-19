@@ -1,0 +1,53 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "ogbench gciql",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "impls/main.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["--algo_name", "gciql"],
+            "env": {
+                "JAX_DISABLE_JIT": "true",
+                // "JAX_PLATFORM_NAME": "cpu",
+                "MUJOCO_GL": "egl",
+                "CUDA_VISIBLE_DEVICES": "2",
+            }
+        },
+        {
+            "name": "ogbench crl",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "impls/main.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["--algo_name", "crl"],
+            "env": {
+                "JAX_DISABLE_JIT": "true",
+                // "JAX_PLATFORM_NAME": "cpu",
+                "MUJOCO_GL": "egl",
+                "CUDA_VISIBLE_DEVICES": "2",
+            }
+        },
+        {
+            "name": "ogbench model based crl",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "impls/main.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["--algo_name", "crl_model_based", "--frame_stack", "4", "--log_interval", "5"],
+            "env": {
+                "JAX_DISABLE_JIT": "true",
+                // "JAX_PLATFORM_NAME": "cpu",
+                "MUJOCO_GL": "egl",
+                "CUDA_VISIBLE_DEVICES": "0",
+            }
+        },
+        ]
+}

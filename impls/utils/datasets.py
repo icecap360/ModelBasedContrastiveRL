@@ -200,8 +200,8 @@ class GCDataset:
             assert 'next_observations' not in self.dataset
             if self.preprocess_frame_stack:
                 stacked_observations = self.get_stacked_observations(np.arange(self.size))
-                self.dataset = Dataset(self.dataset.copy(dict(observations=stacked_observations)))
-
+                stacked_actions = self.get_stacked_actions(np.arange(self.size))
+                self.dataset = Dataset(self.dataset.copy(dict(observations=stacked_observations,actions=stacked_actions)))
     def sample(self, batch_size, idxs=None, evaluation=False):
         """Sample a batch of transitions with goals.
 
@@ -219,8 +219,15 @@ class GCDataset:
 
         batch = self.dataset.sample(batch_size, idxs)
         if self.config['frame_stack'] is not None:
-            batch['observations'] = self.get_observations(idxs)
-            batch['next_observations'] = self.get_observations(idxs + 1)
+            batch['stacked_observations'] = self.get_observations(idxs)
+            batch['stacked_observations'] = np.moveaxis(batch['stacked_observations'], -1, 1)
+            batch['observations'] = self.get_observations(idxs)[..., -1]
+            batch['stacked_actions'] = self.get_actions(idxs)
+            batch['stacked_actions'] = np.moveaxis(batch['stacked_actions'], -1, 1)
+            batch['actions'] = self.get_actions(idxs)[..., -1]
+            batch['next_observations'] = self.get_observations(idxs + 1)[..., -1]
+            batch['stacked_next_observations'] = self.get_observations(idxs + 1)
+            batch['stacked_next_observations'] = np.moveaxis(batch['stacked_next_observations'], -1, 1)
 
         value_goal_idxs = self.sample_goals(
             idxs,
@@ -237,8 +244,12 @@ class GCDataset:
             self.config['actor_geom_sample'],
         )
 
-        batch['value_goals'] = self.get_observations(value_goal_idxs)
-        batch['actor_goals'] = self.get_observations(actor_goal_idxs)
+        if self.config['frame_stack'] is not None:
+            batch['value_goals'] = self.get_observations(value_goal_idxs)[:, :, -1]
+            batch['actor_goals'] = self.get_observations(actor_goal_idxs)[:, :, -1]
+        else:
+            batch['value_goals'] = self.get_observations(value_goal_idxs)
+            batch['actor_goals'] = self.get_observations(actor_goal_idxs)
         successes = (idxs == value_goal_idxs).astype(float)
         batch['masks'] = 1.0 - successes
         batch['rewards'] = successes - (1.0 if self.config['gc_negative'] else 0.0)
@@ -303,8 +314,23 @@ class GCDataset:
         for i in reversed(range(self.config['frame_stack'])):
             cur_idxs = np.maximum(idxs - i, initial_state_idxs)
             rets.append(jax.tree_util.tree_map(lambda arr: arr[cur_idxs], self.dataset['observations']))
-        return jax.tree_util.tree_map(lambda *args: np.concatenate(args, axis=-1), *rets)
+        return jax.tree_util.tree_map(lambda *args: np.stack(args, axis=-1) if len(args) > 1 else args, *rets)
 
+    def get_actions(self, idxs):
+        """Return the observations for the given indices."""
+        if self.config['frame_stack'] is None or self.preprocess_frame_stack:
+            return jax.tree_util.tree_map(lambda arr: arr[idxs], self.dataset['actions'])
+        else:
+            return self.get_stacked_actions(idxs)
+
+    def get_stacked_actions(self, idxs):
+        """Return the frame-stacked observations for the given indices."""
+        initial_state_idxs = self.initial_locs[np.searchsorted(self.initial_locs, idxs, side='right') - 1]
+        rets = []
+        for i in reversed(range(self.config['frame_stack'])):
+            cur_idxs = np.maximum(idxs - i, initial_state_idxs)
+            rets.append(jax.tree_util.tree_map(lambda arr: arr[cur_idxs], self.dataset['actions']))
+        return jax.tree_util.tree_map(lambda *args: np.stack(args, axis=-1) if len(args) > 1 else args, *rets)
 
 @dataclasses.dataclass
 class HGCDataset(GCDataset):

@@ -143,7 +143,7 @@ class RunningMeanStd(flax.struct.PyTreeNode):
 class GCActor(nn.Module):
     """Goal-conditioned actor.
 
-    Attributes:
+    Attributes: 
         hidden_dims: Hidden layer dimensions.
         action_dim: Action dimension.
         log_std_min: Minimum value of log standard deviation.
@@ -180,6 +180,7 @@ class GCActor(nn.Module):
         goals=None,
         goal_encoded=False,
         temperature=1.0,
+        encoder_params=None,
     ):
         """Return the action distribution.
 
@@ -356,7 +357,7 @@ class GCBilinearValue(nn.Module):
         self.phi = mlp_module((*self.hidden_dims, self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
         self.psi = mlp_module((*self.hidden_dims, self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
 
-    def __call__(self, observations, goals, actions=None, info=False):
+    def __call__(self, observations, goals, actions=None, info=False, encoder_params=None):
         """Return the value/critic function.
 
         Args:
@@ -387,7 +388,6 @@ class GCBilinearValue(nn.Module):
             return v, phi, psi
         else:
             return v
-
 
 class GCDiscreteBilinearCritic(GCBilinearValue):
     """Goal-conditioned bilinear critic for discrete actions."""
