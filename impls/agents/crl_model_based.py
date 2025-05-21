@@ -8,7 +8,7 @@ import optax
 from utils.encoders import GCEncoder, encoder_modules
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.networks import GCActor, GCBilinearValue, GCDiscreteActor, GCDiscreteBilinearCritic
-from utils.model_based import GCBilinearModelBasedValue, GCModelBasedActor, ModelBasedEncoder, compute_encoder_loss_core
+from utils.model_based import GCBilinearModelBasedValue, GCModelBasedActor, ModelBasedEncoder, compute_encoder_loss_core, compute_dino_style_encoder_loss_core
 import flax.linen as nn
 from typing import Any, Sequence, Dict, Tuple # Added for typing
 from flax.core import freeze, unfreeze
@@ -28,6 +28,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
     encoder: TrainState # TrainState for the online ModelBasedEncoder
     encoder_target_params: flax.core.FrozenDict # Parameters for the target ModelBasedEncoder
     # --- End of new attributes ---
+    teacher_center: jnp.ndarray
 
     def contrastive_loss(self, batch, grad_params, module_name='critic'):
         """Compute the contrastive value loss for the Q or V function."""
@@ -151,32 +152,54 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         for k, v in critic_info.items():
             info[f'critic/{k}'] = v
 
-        if self.config['actor_loss'] == 'awr':
-            value_loss, value_info = self.contrastive_loss(batch, grad_params, 'value')
-            for k, v in value_info.items():
-                info[f'value/{k}'] = v
-        else:
-            value_loss = 0.0
-
         rng, actor_rng = jax.random.split(rng)
         actor_loss, actor_info = self.actor_loss(batch, grad_params, actor_rng)
         for k, v in actor_info.items():
             info[f'actor/{k}'] = v
 
-        loss = critic_loss + value_loss + actor_loss
+        loss = critic_loss  + actor_loss
         return loss, info
 
     # @jax.jit
     # def update(self, batch: Dict): # This updates actor/critic/value (self.network)
-    #     # First update (e.g., policy)
-    #     new_self1, info = self.update_rl(batch)
+    #     new_rng, rng_for_loss = jax.random.split(self.rng)
 
-    #     # Second update (e.g., value function), using updated RNG/network from first update
-    #     new_self2, encoder_info = new_self1.update_encoder(batch)
+    #     # Pack the two parameter sets into one tuple
+    #     params_tuple = (self.network.params, self.encoder.params)
 
-    #     info.update(encoder_info)
+    #     def loss_fn(net_p, enc_p):
+    #         loss, info = self.total_loss(batch, net_p, enc_p, rng_for_loss)
+    #         return loss, info                     # has_aux=True expects (scalar, aux)
 
-    #     return new_self2, info
+    #     (loss, info), (grads_net, grads_enc) = jax.value_and_grad(
+    #         loss_fn, argnums=(0, 1), has_aux=True
+    #     )(self.network.params, self.encoder.params)
+
+    #     new_network = self.network.apply_gradients(grads=grads_net)
+    #     new_encoder = self.encoder.apply_gradients(grads=grads_enc)
+
+    #     return self.replace(
+    #         rng=new_rng,
+    #         network=new_network,
+    #         encoder=new_encoder,
+    #     ), info
+    #     # Compute loss + grads jointly
+    #     (loss, info), (grads_net, grads_enc) = \
+    #         jax.value_and_grad(self.total_loss, argnums=(0,1), has_aux=True)(
+    #             batch, self.network.params, self.encoder.params, rng_for_loss
+    #         )
+
+    #     # Apply network update
+    #     new_network_state = self.network.apply_gradients(grads=grads_net)
+
+    #     # Apply encoder update
+    #     new_encoder_state = self.encoder.apply_gradients(grads=grads_enc)
+
+    #     return self.replace(
+    #     rng=new_rng,
+    #     network=new_network_state,
+    #     encoder=new_encoder_state,
+    #     ), info
 
     @jax.jit
     def update(self, batch: Dict): # This updates actor/critic/value (self.network)
@@ -328,7 +351,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         # Arguments for initializing each component of self.network
         # Critic's __call__ needs: obs, goals, actions, encoder_params
         network_init_args = {
-            'critic': (ex_observations, ex_goals, ex_actions, initial_encoder_params),
+            'critic': (ex_observations, ex_goals, ex_actions, initial_encoder_params), 
             'actor': (ex_observations, ex_goals, encoder_target_params), # Pass shared encoder's TARGET parameters
         }
         if config.actor_loss == 'awr':
@@ -352,7 +375,8 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             rng=rng, network=main_network_train_state, 
             encoder_module_def=shared_encoder_module_def,
             encoder=encoder_train_state, encoder_target_params=encoder_target_params,
-            config=flax.core.FrozenDict(config) if isinstance(config, ml_collections.ConfigDict) else config
+            config=flax.core.FrozenDict(config) if isinstance(config, ml_collections.ConfigDict) else config,
+            teacher_center=jnp.zeros(shared_encoder_module_def.num_bins)
         )
 
         # # Define value and actor networks.
@@ -426,12 +450,22 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
 
     # --- New method for computing encoder loss (wraps the core logic) ---
     def _encoder_loss_fn_for_grad(self, online_encoder_params: flax.core.FrozenDict, batch_for_encoder: dict):
-        encoder_loss = compute_encoder_loss_core(
+        # encoder_loss = compute_encoder_loss_core(
+        #     online_encoder_params=online_encoder_params,
+        #     target_encoder_params=self.encoder_target_params,
+        #     encoder_module_def=self.encoder_module_def,
+        #     states=batch_for_encoder['stacked_observations'], actions=batch_for_encoder['stacked_actions'],
+        #     next_states=batch_for_encoder['stacked_next_observations'], not_done_mask=batch_for_encoder['masks'],
+        #     enc_horizon=self.config['frame_stack'], 
+        #     dyn_weight=self.config['dyn_weight'],
+        # )
+        encoder_loss = compute_dino_style_encoder_loss_core(
             online_encoder_params=online_encoder_params,
             target_encoder_params=self.encoder_target_params,
             encoder_module_def=self.encoder_module_def,
-            states=batch_for_encoder['stacked_observations'], actions=batch_for_encoder['stacked_actions'],
-            next_states=batch_for_encoder['stacked_next_observations'], not_done_mask=batch_for_encoder['masks'],
+            states=batch_for_encoder['stacked_observations'], 
+            next_states=batch_for_encoder['stacked_next_observations'],
+            teacher_center=self.teacher_center,actions=batch_for_encoder['stacked_actions'],
             enc_horizon=self.config['frame_stack'], 
             dyn_weight=self.config['dyn_weight'],
         )
@@ -444,8 +478,16 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         new_rng, _ = jax.random.split(self.rng)
         grad_fn = jax.value_and_grad(self._encoder_loss_fn_for_grad, argnums=0, has_aux=True)
         (loss, info), grads = grad_fn(self.encoder.params, batch_for_encoder)
+
         new_encoder_state = self.encoder.apply_gradients(grads=grads)
         return self.replace(encoder=new_encoder_state, rng=new_rng), info
+        # Teacher center update
+        decay = self.config.get('encoder_target_decay', 0.999)
+        new_teacher_center = (1 - decay) * self.teacher_center + \
+                         decay * info['current_batch_avg_teacher_logits']
+        info.pop('current_batch_avg_teacher_logits', None)
+        new_encoder_state = self.encoder.apply_gradients(grads=grads)
+        return self.replace(encoder=new_encoder_state, rng=new_rng, teacher_center=new_teacher_center), info
 
     @jax.jit
     def update_encoder_target_hard(self):
@@ -456,7 +498,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         Soft‐update the target encoder parameters via EMA:
             new_target = decay * old_target + (1 - decay) * online_params
         """
-        decay: float = 0.999
+        decay = self.config.get('encoder_target_decay', 0.999)
         target_dict = unfreeze(self.encoder_target_params)
         online_dict = unfreeze(self.encoder.params)
 

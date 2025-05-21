@@ -107,15 +107,35 @@ def main(_):
     while i <= FLAGS.train_steps:
         # Update agent.
         batch = train_dataset.sample(config['batch_size'])
+        update_info = {}
         agent, update_info = agent.update_encoder(batch)
         progress_bar.update(1)
         i += 1
-        if i > 500:
-            agent, rl_info = agent.update(batch)
-            progress_bar.update(1)
-            i += 1
-            update_info.update(rl_info)
+
         agent = agent.update_encoder_target_soft()
+        
+        agent, rl_info = agent.update(batch)
+        progress_bar.update(1)
+        i += 1
+        update_info.update(rl_info)
+        
+        # Update agent.
+        # update_info = {}
+        # if i % 500 == 0 :
+        #     for _ in range(250):
+        #         batch = train_dataset.sample(config['batch_size'])
+        #         agent, encoder_info = agent.update_encoder(batch)
+        #         update_info.update(encoder_info)
+        #         progress_bar.update(1)
+        #         i += 1
+        #         agent = agent.update_encoder_target_soft()
+        # if i >= 250:
+        #     batch = train_dataset.sample(config['batch_size'])
+        #     agent, rl_info = agent.update(batch)
+        #     progress_bar.update(1)
+        #     i += 1
+        #     update_info.update(rl_info)
+
         # if i % 250 == 0:
         #     agent = agent.update_encoder_target_hard()
 

@@ -50,7 +50,7 @@ class ModelBasedEncoder(nn.Module):
     state_feature_dim: int = 0
     cnn_input_channels: int = 3
     cnn_flat_size: int = 1568
-
+    num_bins: int = 65
     def setup(self):
         self.activ_fn = getattr(nn, self.activ_fn_name)
         
@@ -68,7 +68,14 @@ class ModelBasedEncoder(nn.Module):
         self._za_lin = nn.Dense(features=self.za_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)
         self._zsa_mlp = ModelBasedMLP(output_dim=self.zsa_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name)
         self._output_next_zs = nn.Dense(features=self.zs_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)
+        self._to_logits_head = nn.Dense(features=self.num_bins, kernel_init=default_kernel_init, bias_init=default_bias_init, name="to_logits_head")
 
+    @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
+    def get_discrete_logits(self, zs_continuous: jnp.ndarray) -> jnp.ndarray:
+        """Converts continuous state embeddings (zs) to logits for discrete bins."""
+        logits = self._to_logits_head(zs_continuous)
+        return logits
+        
     @nn.compact  # <--- ADDED @nn.compact
     def _cnn_zs(self, state: jnp.ndarray) -> jnp.ndarray:
         zs = state / 255.0 - 0.5
@@ -108,6 +115,7 @@ class ModelBasedEncoder(nn.Module):
     def _init_all_paths(self, state_example: jnp.ndarray, action_example: jnp.ndarray):
         zs_example = self.encode_state(state_example)
         self.model_all(zs_example, action_example)
+        self.get_discrete_logits(zs_example)
         return zs_example
 
 class GCModelBasedActor(nn.Module):
@@ -298,6 +306,91 @@ def compute_encoder_loss_core(
     return total_encoder_loss, {'encoder_loss_total': total_encoder_loss, 'encoder_avg_step_mse': avg_dyn_loss_per_step}
 
 
+# Modified loss function for DINO-style training
+def compute_dino_style_encoder_loss_core(
+    online_encoder_params: flax.core.FrozenDict,
+    target_encoder_params: flax.core.FrozenDict, # EMA of online_encoder_params
+    encoder_module_def: ModelBasedEncoder,
+    states: jnp.ndarray,  # Shape: (batch_size, horizon + 1, *state_shape)
+    actions: jnp.ndarray, # Shape: (batch_size, horizon, action_dim)
+    # next_states is implicitly states[:, 1:]
+    # not_done_mask: jnp.ndarray, # Shape: (batch_size, horizon) - can be used to mask loss
+    enc_horizon: int,
+    dyn_weight: float, # Weight for the overall dynamics distillation loss
+    teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
+    teacher_temp: float = 0.2,
+    student_temp: float = 1.0,
+    key: Optional[jax.random.PRNGKey] = None, # For any stochastic ops if needed (not for this CE loss)
+    next_states=None
+):
+    batch_size = states.shape[0]
+    # zs_dim = encoder_module_def.zs_dim # Not directly used for logits
+    num_bins = encoder_module_def.num_bins
+    zs_dim = encoder_module_def.zs_dim; state_shape = states.shape[2:]
+
+    target_zs_horizon = encoder_module_def.apply(
+        {'params': target_encoder_params}, next_states, method=ModelBasedEncoder.encode_state
+    )
+    target_logits_horizon = encoder_module_def.apply(
+        {'params': target_encoder_params}, target_zs_horizon, method=ModelBasedEncoder.get_discrete_logits
+    )
+
+    current_batch_avg_teacher_logits = jnp.mean(target_logits_horizon, axis=(0, 1)) # Shape: (num_bins,)
+    current_batch_avg_teacher_logits = jax.lax.stop_gradient(current_batch_avg_teacher_logits)
+
+    initial_states_for_online_encoder = states[:, 0] 
+    current_pred_zs_continuous = encoder_module_def.apply(
+        {'params': online_encoder_params}, initial_states_for_online_encoder, method=ModelBasedEncoder.encode_state
+    )
+
+    centered_target_logits = target_logits_horizon #- teacher_center # Broadcasting teacher_center
+    
+    # p_target_horizon will be (batch_size, horizon, num_bins)
+    p_target_horizon = jax.nn.softmax(centered_target_logits / teacher_temp, axis=-1)
+    p_target_horizon = jax.lax.stop_gradient(p_target_horizon) # Teacher targets are fixed
+
+    def loop_body(carry_pred_zs_continuous, i):
+        # carry_pred_zs_continuous is student's current continuous latent state z^_t
+        action_step = actions[:, i] # a_t
+        
+        # Student predicts delta for next continuous state based on its z^_t and a_t
+        pred_next_zs_continuous = encoder_module_def.apply(
+            {'params': online_encoder_params}, carry_pred_zs_continuous, action_step, method=ModelBasedEncoder.model_all
+        )        
+        # Student converts its predicted z^_{t+1} to logits
+        student_logits_step = encoder_module_def.apply(
+            {'params': online_encoder_params}, pred_next_zs_continuous, method=ModelBasedEncoder.get_discrete_logits
+        )
+        
+        # Target probabilities for this step
+        p_target_step = p_target_horizon[:, i, :] # Shape: (batch_size, num_bins)
+        
+        # Cross-entropy loss for the current step
+        # H(p_target, p_student) = - sum(p_target * log_softmax(student_logits / student_temp))
+        log_p_student_step = jax.nn.log_softmax(student_logits_step / student_temp, axis=-1)
+        step_ce_loss = -jnp.sum(p_target_step * log_p_student_step, axis=-1) # Sum over bins
+        mean_step_ce_loss = jnp.mean(step_ce_loss) # Mean over batch
+        
+        # Carry student's predicted next continuous state for the next iteration
+        return pred_next_zs_continuous, mean_step_ce_loss
+
+    # Scan over the horizon
+    # final_pred_zs_continuous is the student's predicted z_H
+    # ce_losses_per_step contains the mean cross-entropy loss for each step in the horizon
+    final_pred_zs_continuous, ce_losses_per_step = jax.lax.scan(
+        loop_body, current_pred_zs_continuous, jnp.arange(enc_horizon)
+    )
+    
+    # Total loss is the sum of mean per-step losses, scaled by dyn_weight
+    total_encoder_loss = jnp.sum(ce_losses_per_step) * dyn_weight
+    avg_ce_loss_per_step = jnp.mean(ce_losses_per_step) # Average of the mean per-step losses
+
+    return total_encoder_loss, {
+        'encoder_loss_total': total_encoder_loss,
+        'encoder_avg_step_ce': avg_ce_loss_per_step,
+        'ce_losses_per_step': ce_losses_per_step, # For logging if desired
+        'current_batch_avg_teacher_logits': current_batch_avg_teacher_logits,
+    }
 
 def sample_gumbel(key, shape, eps=1e-20):
     """Sample from Gumbel(0, 1)"""
