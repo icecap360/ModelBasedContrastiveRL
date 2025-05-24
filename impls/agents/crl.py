@@ -62,6 +62,10 @@ class CRLAgent(flax.struct.PyTreeNode):
             'v_mean': v.mean(),
             'v_max': v.max(),
             'v_min': v.min(),
+            'debug_v_std': jnp.mean(jnp.std(logits, axis=1)),
+            'debug_v_mean': jnp.mean(logits),
+            'debug_v > 1': jnp.sum(logits > 1.0),
+            'debug_v_abs_mean': jnp.abs(logits).mean(),
             'binary_accuracy': jnp.mean((logits > 0) == I),
             'categorical_accuracy': jnp.mean(correct),
             'logits_pos': logits_pos,
@@ -121,6 +125,13 @@ class CRLAgent(flax.struct.PyTreeNode):
                 q_actions = jnp.clip(dist.mode(), -1, 1)
             else:
                 q_actions = jnp.clip(dist.sample(seed=rng), -1, 1)
+
+            v1, v2 = self.network.select('critic')(
+                observations=batch['observations'], 
+                goals=batch['actor_goals'], actions=q_actions,
+            )
+            v = jnp.minimum(v1, v2)
+            
             q1, q2 = value_transform(
                 self.network.select('critic')(batch['observations'], batch['actor_goals'], q_actions)
             )
@@ -138,11 +149,17 @@ class CRLAgent(flax.struct.PyTreeNode):
                 'actor_loss': actor_loss,
                 'q_loss': q_loss,
                 'bc_loss': bc_loss,
-                'q_mean': q.mean(),
-                'q_abs_mean': jnp.abs(q).mean(),
                 'bc_log_prob': log_prob.mean(),
                 'mse': jnp.mean((dist.mode() - batch['actions']) ** 2),
                 'std': jnp.mean(dist.scale_diag),
+                'q_mean': q.mean(),
+                'debug_v_mean': v.mean(),
+                'debug_v_abs_mean': jnp.abs(v).mean(),
+                'debug_v_skewness': compute_skewness(v),
+                'debug_v_std': jnp.std(v),
+                'debug_v_median': jnp.median(v),
+                'debug_v_num > 1': jnp.sum(v > 1.0),
+                'debug_v_num < 1': jnp.sum(v < 1.0),
             }
         else:
             raise ValueError(f'Unsupported actor loss: {self.config["actor_loss"]}')
@@ -304,6 +321,13 @@ class CRLAgent(flax.struct.PyTreeNode):
 
         return cls(rng, network=network, config=flax.core.FrozenDict(**config))
 
+
+def compute_skewness(x):
+    mean = jnp.mean(x)
+    std = jnp.std(x)
+    n = x.size
+    return jnp.sum(((x - mean) / std) ** 3) / n
+    
 def get_config():
     config = ml_collections.ConfigDict(
         dict(

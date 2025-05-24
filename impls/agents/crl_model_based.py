@@ -8,7 +8,7 @@ import optax
 from utils.encoders import GCEncoder, encoder_modules
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.networks import GCActor, GCBilinearValue, GCDiscreteActor, GCDiscreteBilinearCritic
-from utils.model_based import GCBilinearModelBasedValue, GCModelBasedActor, ModelBasedEncoder, compute_encoder_loss_core, compute_dino_style_encoder_loss_core
+from utils.model_based import GCBilinearModelBasedValue, GCModelBasedActor, ModelBasedEncoder, compute_encoder_loss_core, compute_dino_style_encoder_loss_core, compute_state_encoder_loss_core
 import flax.linen as nn
 from typing import Any, Sequence, Dict, Tuple # Added for typing
 from flax.core import freeze, unfreeze
@@ -27,6 +27,8 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
     encoder_module_def: ModelBasedEncoder = flax.struct.field(pytree_node=False) # The static module definition
     encoder: TrainState # TrainState for the online ModelBasedEncoder
     encoder_target_params: flax.core.FrozenDict # Parameters for the target ModelBasedEncoder
+    critic_target_params: flax.core.FrozenDict # Parameters for the target Critic
+    critic_module_def: GCBilinearModelBasedValue = flax.struct.field(pytree_node=False) # The static module definition
     # --- End of new attributes ---
     teacher_center: jnp.ndarray
 
@@ -83,7 +85,10 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             'v_min': v.min(),
             'binary_accuracy': jnp.mean((logits > 0) == I),
             'categorical_accuracy': jnp.mean(correct),
-            'variance': jnp.mean(var),
+            'debug_v_std': jnp.mean(jnp.std(logits, axis=1)),
+            'debug_v_mean': jnp.mean(logits),
+            'debug_v > 1': jnp.sum(logits > 1.0),
+            'debug_v_abs_mean': jnp.abs(logits).mean(),
             'logits_pos': logits_pos,
             'logits_neg': logits_neg,
             'logits': logits.mean(),
@@ -118,6 +123,22 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             else:
                 q_actions = jnp.clip(dist.sample(seed=rng), -1, 1)
 
+            v1, v2 = self.network.select('critic')(
+                observations=batch['observations'], 
+                goals=batch['actor_goals'], actions=q_actions,
+                encoder_params =self.encoder_target_params, # Shared TARGET encoder params
+            )
+            v = jnp.minimum(v1, v2)
+
+            # q1, q2 = self.critic_module_def.apply(
+            #     {'params': self.critic_target_params},
+            #     observations=batch['observations'],
+            #     goals=batch['actor_goals'],
+            #     actions=q_actions,
+            #     encoder_params=self.encoder_target_params,
+            #     mutable=False,      # or whatever you need
+            #     method=self.critic_module_def.__call__,
+            # )
             q1, q2 = value_transform(self.network.select('critic')(
                 observations=batch['observations'], 
                 goals=batch['actor_goals'], actions=q_actions,
@@ -133,11 +154,17 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 'actor_loss': actor_loss,
                 'q_loss': q_loss,
                 'bc_loss': bc_loss,
-                'q_mean': q.mean(),
-                'q_abs_mean': jnp.abs(q).mean(),
                 'bc_log_prob': log_prob.mean(),
                 'mse': jnp.mean((dist.mode() - batch['actions']) ** 2),
                 'std': jnp.mean(dist.scale_diag),
+                'q_mean': q.mean(),
+                'debug_v_mean': v.mean(),
+                'debug_v_abs_mean': jnp.abs(v).mean(),
+                'debug_v_skewness': compute_skewness(v),
+                'debug_v_std': jnp.std(v),
+                'debug_v_median': jnp.median(v),
+                'debug_v_num > 1': jnp.sum(v > 1.0),
+                'debug_v_num < 1': jnp.sum(v < 1.0),
             }
         else:
             raise ValueError(f'Unsupported actor loss: {self.config["actor_loss"]}')
@@ -370,11 +397,15 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         main_network_train_state = TrainState.create(
             model_def=main_agent_module_dict, params=main_network_params, tx=main_network_tx
         )
+        critic_target_params = flax.core.FrozenDict(main_network_params['modules_critic']) # Copy critic params for target
         
         return cls(
             rng=rng, network=main_network_train_state, 
             encoder_module_def=shared_encoder_module_def,
-            encoder=encoder_train_state, encoder_target_params=encoder_target_params,
+            critic_module_def=critic_def,
+            encoder=encoder_train_state, 
+            encoder_target_params=encoder_target_params,
+            critic_target_params = critic_target_params,
             config=flax.core.FrozenDict(config) if isinstance(config, ml_collections.ConfigDict) else config,
             teacher_center=jnp.zeros(shared_encoder_module_def.num_bins)
         )
@@ -469,6 +500,13 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             enc_horizon=self.config['frame_stack'], 
             dyn_weight=self.config['dyn_weight'],
         )
+        # encoder_loss = compute_state_encoder_loss_core(
+        #     online_encoder_params=online_encoder_params,
+        #     target_encoder_params=self.encoder_target_params,
+        #     encoder_module_def=self.encoder_module_def,
+        #     states=batch_for_encoder['stacked_observations'], actions=batch_for_encoder['stacked_actions'],
+        #     teacher_center=self.teacher_center,
+        # )
         # loss_scale = jax.lax.stop_gradient(1.0 / (jnp.abs(encoder_loss).mean() + 1e-6))
         # encoder_loss = encoder_loss * loss_scale
         return encoder_loss
@@ -480,13 +518,11 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         (loss, info), grads = grad_fn(self.encoder.params, batch_for_encoder)
 
         new_encoder_state = self.encoder.apply_gradients(grads=grads)
-        return self.replace(encoder=new_encoder_state, rng=new_rng), info
         # Teacher center update
         decay = self.config.get('encoder_target_decay', 0.999)
         new_teacher_center = (1 - decay) * self.teacher_center + \
                          decay * info['current_batch_avg_teacher_logits']
         info.pop('current_batch_avg_teacher_logits', None)
-        new_encoder_state = self.encoder.apply_gradients(grads=grads)
         return self.replace(encoder=new_encoder_state, rng=new_rng, teacher_center=new_teacher_center), info
 
     @jax.jit
@@ -513,6 +549,28 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         new_target_params = freeze(new_target_dict)
 
         return self.replace(encoder_target_params=new_target_params)
+
+    @jax.jit
+    def update_critic_target_soft(self):
+        """
+        Soft‐update the target encoder parameters via EMA:
+            new_target = decay * old_target + (1 - decay) * online_params
+        """
+        decay = self.config.get('encoder_target_decay', 0.999)
+        target_dict = unfreeze(self.critic_target_params)
+        online_dict = unfreeze(self.network.params['modules_critic'])
+
+        # 2. apply EMA per leaf
+        new_target_dict = jax.tree_map(
+            lambda tgt, src: decay * tgt + (1.0 - decay) * src,
+            target_dict,
+            online_dict,
+        )
+
+        # 3. turn back into FrozenDict
+        new_target_params = freeze(new_target_dict)
+
+        return self.replace(critic_target_params=new_target_params)
 
 def get_config():
     config = ml_collections.ConfigDict(
@@ -575,3 +633,9 @@ def masked_mse_loss(predictions: jnp.ndarray, targets: jnp.ndarray) -> jnp.ndarr
     num_elements = jnp.sum(mask) * predictions.shape[-1] # Count valid scalar elements
     
     return sum_loss / jnp.maximum(num_elements, 1e-8) # Avoid division by zero
+
+def compute_skewness(x):
+    mean = jnp.mean(x)
+    std = jnp.std(x)
+    n = x.size
+    return jnp.sum(((x - mean) / std) ** 3) / n

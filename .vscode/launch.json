@@ -44,7 +44,7 @@
             "args": ["--algo_name", "crl_model_based", "--frame_stack", "4", "--log_interval", "5"],
             "env": {
                 "JAX_DISABLE_JIT": "true",
-                // "JAX_PLATFORM_NAME": "cpu",
+                "JAX_PLATFORM_NAME": "cpu",
                 "MUJOCO_GL": "egl",
                 "CUDA_VISIBLE_DEVICES": "0",
             }
