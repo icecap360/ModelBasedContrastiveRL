@@ -31,6 +31,8 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
     critic_module_def: GCBilinearModelBasedValue = flax.struct.field(pytree_node=False) # The static module definition
     # --- End of new attributes ---
     teacher_center: jnp.ndarray
+    momentum_schedule: callable = flax.struct.field(pytree_node=False)
+    teacher_temp_schedule: callable = flax.struct.field(pytree_node=False)  
 
     def contrastive_loss(self, batch, grad_params, module_name='critic'):
         """Compute the contrastive value loss for the Q or V function."""
@@ -322,13 +324,58 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             encoder_init_rng, state_example=dummy_state_for_enc_init, 
             action_example=dummy_action_for_enc_init, method=ModelBasedEncoder._init_all_paths 
         )['params']
-        encoder_optimizer = optax.adam(learning_rate=config.encoder_lr)
+
+        # Added learning rate decay and grdient clipping
+        total_steps, warmup_steps = 1_000_000, 5000
+        encoder_lr_schedule = optax.join_schedules(
+        schedules=[
+                # warmup phase: from 0 → base_lr
+                optax.linear_schedule(
+                    init_value=1.0e-06,
+                    end_value=3.5e-4,
+                    transition_steps=warmup_steps,
+                ),
+                # cosine phase: from base_lr → min_lr
+                optax.cosine_decay_schedule(
+                    init_value=3.5e-4,
+                    decay_steps=total_steps - warmup_steps,
+                    alpha=1.0e-06 / 3.5e-4,
+                ),
+            ],
+            boundaries=[warmup_steps],
+        )
+        encoder_optimizer = optax.adamw(learning_rate=config.encoder_lr)
         encoder_train_state = TrainState.create(
             model_def=shared_encoder_module_def,
             params=initial_encoder_params, 
             tx=encoder_optimizer
         )
         encoder_target_params = flax.core.FrozenDict(initial_encoder_params)
+
+        # Adding teacher temperature warmup
+        warmup_teacher_steps = 100_000
+        warmup_teacher_temp = 0.04
+        teacher_temp = 0.07
+        teacher_temp_schedule = optax.join_schedules(
+            schedules=[
+                optax.linear_schedule(
+                    init_value=warmup_teacher_temp,
+                    end_value=teacher_temp,
+                    transition_steps=warmup_teacher_steps,
+                ),
+                optax.constant_schedule(teacher_temp),
+            ],
+            boundaries=[warmup_teacher_steps],
+        )
+
+        # Adding momentume scheduler
+        momentum_teacher = 0.994
+        final_momentum_teacher = 1.0
+        momentum_schedule = optax.cosine_decay_schedule(
+            init_value=momentum_teacher,
+            decay_steps=total_steps,
+            alpha=final_momentum_teacher / momentum_teacher,
+        )
         # --- End of standalone ModelBasedEncoder initialization ---
         # --- Define Actor/Critic/Value Networks ---
         # These are other encoders (e.g. visual) for actor/critic, not the shared model-based one.
@@ -407,7 +454,9 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             encoder_target_params=encoder_target_params,
             critic_target_params = critic_target_params,
             config=flax.core.FrozenDict(config) if isinstance(config, ml_collections.ConfigDict) else config,
-            teacher_center=jnp.zeros(shared_encoder_module_def.num_bins)
+            teacher_center=jnp.zeros(shared_encoder_module_def.num_bins),
+            momentum_schedule=momentum_schedule,
+            teacher_temp_schedule=teacher_temp_schedule
         )
 
         # # Define value and actor networks.
@@ -480,7 +529,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         # return cls(rng, network=network, config=flax.core.FrozenDict(**config))
 
     # --- New method for computing encoder loss (wraps the core logic) ---
-    def _encoder_loss_fn_for_grad(self, online_encoder_params: flax.core.FrozenDict, batch_for_encoder: dict):
+    def _encoder_loss_fn_for_grad(self, online_encoder_params: flax.core.FrozenDict, batch_for_encoder: dict, step:int):
         # encoder_loss = compute_encoder_loss_core(
         #     online_encoder_params=online_encoder_params,
         #     target_encoder_params=self.encoder_target_params,
@@ -490,6 +539,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         #     enc_horizon=self.config['frame_stack'], 
         #     dyn_weight=self.config['dyn_weight'],
         # )
+        teacher_temp = self.teacher_temp_schedule(step)
         encoder_loss = compute_dino_style_encoder_loss_core(
             online_encoder_params=online_encoder_params,
             target_encoder_params=self.encoder_target_params,
@@ -499,6 +549,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             teacher_center=self.teacher_center,actions=batch_for_encoder['stacked_actions'],
             enc_horizon=self.config['frame_stack'], 
             dyn_weight=self.config['dyn_weight'],
+            teacher_temp=teacher_temp
         )
         # encoder_loss = compute_state_encoder_loss_core(
         #     online_encoder_params=online_encoder_params,
@@ -512,29 +563,51 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         return encoder_loss
 
     @jax.jit
-    def update_encoder(self, batch_for_encoder: dict):
+    def update_encoder(self, batch_for_encoder: dict, step:int):
         new_rng, _ = jax.random.split(self.rng)
-        grad_fn = jax.value_and_grad(self._encoder_loss_fn_for_grad, argnums=0, has_aux=True)
+        def loss_fn(params, batch_for_encoder):
+            return self._encoder_loss_fn_for_grad(params, batch_for_encoder, step)
+        grad_fn = jax.value_and_grad(loss_fn, argnums=0, has_aux=True)
         (loss, info), grads = grad_fn(self.encoder.params, batch_for_encoder)
+
+        grad_max = jax.tree_util.tree_map(jnp.max, grads)
+        grad_min = jax.tree_util.tree_map(jnp.min, grads)
+        grad_norm = jax.tree_util.tree_map(jnp.linalg.norm, grads)
+        grad_max_flat = jnp.concatenate([jnp.reshape(x, -1) for x in jax.tree_util.tree_leaves(grad_max)], axis=0)
+        grad_min_flat = jnp.concatenate([jnp.reshape(x, -1) for x in jax.tree_util.tree_leaves(grad_min)], axis=0)
+        grad_norm_flat = jnp.concatenate([jnp.reshape(x, -1) for x in jax.tree_util.tree_leaves(grad_norm)], axis=0)
+        final_grad_max = jnp.max(grad_max_flat)
+        final_grad_min = jnp.min(grad_min_flat)
+        final_grad_norm = jnp.linalg.norm(grad_norm_flat, ord=1)
+        info['grad/max'] = final_grad_max
+        info['grad/min'] = final_grad_min
+        info['grad/norm'] = final_grad_norm
 
         new_encoder_state = self.encoder.apply_gradients(grads=grads)
         # Teacher center update
-        decay = self.config.get('encoder_target_decay', 0.999)
+        decay = self.momentum_schedule(step)
         new_teacher_center = (1 - decay) * self.teacher_center + \
                          decay * info['current_batch_avg_teacher_logits']
         info.pop('current_batch_avg_teacher_logits', None)
-        return self.replace(encoder=new_encoder_state, rng=new_rng, teacher_center=new_teacher_center), info
+
+        new_info = {}
+        for k,v in info.items():
+            if k.startswith('encoder_'):
+                new_info[k] = v
+            else:
+                new_info[f'encoder_{k}'] = v
+        return self.replace(encoder=new_encoder_state, rng=new_rng, teacher_center=new_teacher_center), new_info
 
     @jax.jit
     def update_encoder_target_hard(self):
         return self.replace(encoder_target_params=self.encoder.params)
     @jax.jit
-    def update_encoder_target_soft(self):
+    def update_encoder_target_soft(self, step:int):
         """
         Soft‐update the target encoder parameters via EMA:
             new_target = decay * old_target + (1 - decay) * online_params
         """
-        decay = self.config.get('encoder_target_decay', 0.999)
+        decay = self.momentum_schedule(step)
         target_dict = unfreeze(self.encoder_target_params)
         online_dict = unfreeze(self.encoder.params)
 
@@ -551,12 +624,12 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         return self.replace(encoder_target_params=new_target_params)
 
     @jax.jit
-    def update_critic_target_soft(self):
+    def update_critic_target_soft(self, step:int):
         """
         Soft‐update the target encoder parameters via EMA:
             new_target = decay * old_target + (1 - decay) * online_params
         """
-        decay = self.config.get('encoder_target_decay', 0.999)
+        decay = self.momentum_schedule(step)
         target_dict = unfreeze(self.critic_target_params)
         online_dict = unfreeze(self.network.params['modules_critic'])
 

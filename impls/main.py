@@ -115,8 +115,8 @@ def main(_):
         batch = train_dataset.sample(config['batch_size'])
         update_info = {}
         # if i < 5:
-        agent, update_info = agent.update_encoder(batch)
-        agent = agent.update_encoder_target_soft()
+        agent, update_info = agent.update_encoder(batch, i)
+        agent = agent.update_encoder_target_soft(i)
         
         # if i >= 5:
         #     agent, rl_info = agent.update(batch)
