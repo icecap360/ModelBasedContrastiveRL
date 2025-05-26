@@ -30,8 +30,8 @@ flags.DEFINE_string('algo_name', None, 'Algorithm file name')
 flags.DEFINE_integer('restore_epoch', None, 'Restore epoch.')
 
 flags.DEFINE_integer('train_steps', 1000000, 'Number of training steps.')
-flags.DEFINE_integer('log_interval', 500,'Logging interval')
-flags.DEFINE_integer('eval_interval', 200000 * 100, 'Evaluation interval.') # 100000
+flags.DEFINE_integer('log_interval', 1000,'Logging interval')
+flags.DEFINE_integer('eval_interval', 100000, 'Evaluation interval.') # 100000
 flags.DEFINE_integer('save_interval', 1000000, 'Saving interval.')
 
 flags.DEFINE_integer('eval_tasks', None, 'Number of tasks to evaluate (None for all).')
@@ -114,14 +114,13 @@ def main(_):
         # Update agent.
         batch = train_dataset.sample(config['batch_size'])
         update_info = {}
-        # if i < 5:
         agent, update_info = agent.update_encoder(batch, i)
         agent = agent.update_encoder_target_soft(i)
         
-        # if i >= 5:
-        #     agent, rl_info = agent.update(batch)
-        #     update_info.update(rl_info)
-        #     agent = agent.update_critic_target_soft()
+        if i >= 5:
+            agent, rl_info = agent.update(batch)
+            update_info.update(rl_info)
+            agent = agent.update_critic_target_soft()
 
         progress_bar.update(1)
         i += 1
