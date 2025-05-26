@@ -50,7 +50,7 @@ def main(_):
     now = datetime.now()
     formatted_datetime = now.strftime("%d-%B %H-%M-%S")
     config_flags.DEFINE_config_file('agent', f'impls/agents/{FLAGS.algo_name}.py', lock_config=False)
-    exp_name = f"{FLAGS.run_group} {formatted_datetime} {FLAGS.algo_name} {FLAGS.env_name}" # get_exp_name(FLAGS.seed)
+    exp_name = f"{FLAGS.run_group} {formatted_datetime} {FLAGS.algo_name} {FLAGS.env_name} seed-{FLAGS.seed}" # get_exp_name(FLAGS.seed)
     wandb.login(key="b5353c8c9266cff861ec00110c054264a62de918", relogin=True)
 
     setup_wandb(project='OGBench', group=FLAGS.run_group, name=exp_name)
@@ -120,7 +120,7 @@ def main(_):
         if i >= 5:
             agent, rl_info = agent.update(batch)
             update_info.update(rl_info)
-            agent = agent.update_critic_target_soft()
+            agent = agent.update_critic_target_soft(i)
 
         progress_bar.update(1)
         i += 1
