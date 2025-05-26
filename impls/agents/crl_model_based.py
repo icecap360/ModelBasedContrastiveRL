@@ -326,7 +326,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         )['params']
 
         # Added learning rate decay and grdient clipping
-        total_steps, warmup_steps = 1_000_000, 5000
+        total_steps, warmup_steps = 1_000_000, 10000
         encoder_lr_schedule = optax.join_schedules(
         schedules=[
                 # warmup phase: from 0 → base_lr
@@ -353,7 +353,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         encoder_target_params = flax.core.FrozenDict(initial_encoder_params)
 
         # Adding teacher temperature warmup
-        warmup_teacher_steps = 100_000
+        warmup_teacher_steps = 200_000
         warmup_teacher_temp = 0.04
         teacher_temp = 0.07
         teacher_temp_schedule = optax.join_schedules(
@@ -369,7 +369,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         )
 
         # Adding momentume scheduler
-        momentum_teacher = 0.994
+        momentum_teacher = 0.992
         final_momentum_teacher = 1.0
         momentum_schedule = optax.cosine_decay_schedule(
             init_value=momentum_teacher,
@@ -658,7 +658,7 @@ def get_config():
             layer_norm=True,  # Whether to use layer normalization.
             discount=0.99,  # Discount factor.
             actor_loss='ddpgbc',  # Actor loss type ('awr' or 'ddpgbc').
-            alpha=0.1,  # Temperature in AWR or BC coefficient in DDPG+BC.
+            alpha=0.2,  # Temperature in AWR or BC coefficient in DDPG+BC.
             actor_log_q=True,  # Whether to maximize log Q (True) or Q itself (False) in the actor loss.
             const_std=True,  # Whether to use constant standard deviation for the actor.
             discrete=False,  # Whether the action space is discrete.
