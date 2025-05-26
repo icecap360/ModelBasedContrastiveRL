@@ -118,9 +118,9 @@ def main(_):
         agent = agent.update_encoder_target_soft(i)
         
         if i >= 0:
-            agent, rl_info = agent.update(batch)
+            agent, rl_info = agent.update(batch, i)
             update_info.update(rl_info)
-            agent = agent.update_critic_target_soft(i)
+            # agent = agent.update_critic_target_soft(i)
 
         progress_bar.update(1)
         i += 1

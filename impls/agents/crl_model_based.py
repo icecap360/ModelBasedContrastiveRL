@@ -132,20 +132,20 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             )
             v = jnp.minimum(v1, v2)
 
-            # q1, q2 = self.critic_module_def.apply(
-            #     {'params': self.critic_target_params},
-            #     observations=batch['observations'],
-            #     goals=batch['actor_goals'],
-            #     actions=q_actions,
-            #     encoder_params=self.encoder_target_params,
-            #     mutable=False,      # or whatever you need
-            #     method=self.critic_module_def.__call__,
-            # )
-            q1, q2 = value_transform(self.network.select('critic')(
-                observations=batch['observations'], 
-                goals=batch['actor_goals'], actions=q_actions,
-                encoder_params =self.encoder_target_params, # Shared TARGET encoder params
+            q1, q2 = value_transform(self.critic_module_def.apply(
+                {'params': self.critic_target_params},
+                observations=batch['observations'],
+                goals=batch['actor_goals'],
+                actions=q_actions,
+                encoder_params=self.encoder_target_params,
+                mutable=False,      # or whatever you need
+                method=self.critic_module_def.__call__,
             ))
+            # q1, q2 = value_transform(self.network.select('critic')(
+            #     observations=batch['observations'], 
+            #     goals=batch['actor_goals'], actions=q_actions,
+            #     encoder_params =self.encoder_target_params, # Shared TARGET encoder params
+            # ))
             q = jnp.minimum(q1, q2)
             q_loss = -q.mean() / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
             log_prob = dist.log_prob(batch['actions'])
@@ -189,63 +189,58 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         loss = critic_loss  + actor_loss
         return loss, info
 
-    # @jax.jit
-    # def update(self, batch: Dict): # This updates actor/critic/value (self.network)
-    #     new_rng, rng_for_loss = jax.random.split(self.rng)
-
-    #     # Pack the two parameter sets into one tuple
-    #     params_tuple = (self.network.params, self.encoder.params)
-
-    #     def loss_fn(net_p, enc_p):
-    #         loss, info = self.total_loss(batch, net_p, enc_p, rng_for_loss)
-    #         return loss, info                     # has_aux=True expects (scalar, aux)
-
-    #     (loss, info), (grads_net, grads_enc) = jax.value_and_grad(
-    #         loss_fn, argnums=(0, 1), has_aux=True
-    #     )(self.network.params, self.encoder.params)
-
-    #     new_network = self.network.apply_gradients(grads=grads_net)
-    #     new_encoder = self.encoder.apply_gradients(grads=grads_enc)
-
-    #     return self.replace(
-    #         rng=new_rng,
-    #         network=new_network,
-    #         encoder=new_encoder,
-    #     ), info
-    #     # Compute loss + grads jointly
-    #     (loss, info), (grads_net, grads_enc) = \
-    #         jax.value_and_grad(self.total_loss, argnums=(0,1), has_aux=True)(
-    #             batch, self.network.params, self.encoder.params, rng_for_loss
-    #         )
-
-    #     # Apply network update
-    #     new_network_state = self.network.apply_gradients(grads=grads_net)
-
-    #     # Apply encoder update
-    #     new_encoder_state = self.encoder.apply_gradients(grads=grads_enc)
-
-    #     return self.replace(
-    #     rng=new_rng,
-    #     network=new_network_state,
-    #     encoder=new_encoder_state,
-    #     ), info
-
     @jax.jit
-    def update(self, batch: Dict): # This updates actor/critic/value (self.network)
-        new_rng, rng_for_total_loss = jax.random.split(self.rng)
+    def update(self, batch: Dict, step: int): # This updates actor/critic/value (self.network)
+        rng, rng_critic, rng_actor = jax.random.split(self.rng, 3)
+        info = {}
+        def critic_update(grad_params, rng=None):
+            """Compute the total loss."""
+            info = {}
+            critic_loss, critic_info = self.contrastive_loss(batch, grad_params, 'critic')
+            for k, v in critic_info.items():
+                info[f'critic/{k}'] = v
+            return critic_loss, info
 
-        # network_grad_params are self.network.params
-        # The loss_fn will be differentiated w.r.t these.
-        def loss_fn_for_update(network_params_to_grad):
-            return self.total_loss(batch, network_params_to_grad, rng=rng_for_total_loss)
+        def actor_update(grad_params, rng):
+            """Compute the total loss."""
+            rng, actor_rng = jax.random.split(rng)
+            actor_loss, actor_info = self.actor_loss(batch, grad_params, actor_rng)
+            for k, v in actor_info.items():
+                info[f'actor/{k}'] = v
+            return actor_loss, info
 
         # `apply_loss_fn` is a helper that TrainState might have, or you implement it:
         # It computes grads and applies them.
         # Example:
-        (loss_val, info), grads = jax.value_and_grad(loss_fn_for_update, has_aux=True)(self.network.params)
-        new_network_state = self.network.apply_gradients(grads=grads)
+        (critic_loss_val, critic_info), cgrads = jax.value_and_grad(critic_update, has_aux=True)(self.network.params, rng_critic)
+        net1 = self.network.apply_gradients(grads=cgrads)
+        info.update(critic_info)
         
-        return self.replace(network=new_network_state, rng=new_rng), info
+        agent_post_critic = self.replace(network=net1, rng=rng)
+        agent_after_target = agent_post_critic.update_critic_target_soft(step)
+    
+        (actor_loss_val, actor_info), agrads = jax.value_and_grad(actor_update, has_aux=True)(agent_after_target.network.params, rng_actor)
+        net2 = agent_after_target.network.apply_gradients(grads=agrads)
+        info.update(actor_info)
+
+        return agent_after_target.replace(network=net2, rng=rng), info
+
+    # @jax.jit
+    # def update(self, batch: Dict, step: int ): # This updates actor/critic/value (self.network)
+    #     new_rng, rng_for_total_loss = jax.random.split(self.rng)
+
+    #     # network_grad_params are self.network.params
+    #     # The loss_fn will be differentiated w.r.t these.
+    #     def loss_fn_for_update(network_params_to_grad):
+    #         return self.total_loss(batch, network_params_to_grad, rng=rng_for_total_loss)
+
+    #     # `apply_loss_fn` is a helper that TrainState might have, or you implement it:
+    #     # It computes grads and applies them.
+    #     # Example:
+    #     (loss_val, info), grads = jax.value_and_grad(loss_fn_for_update, has_aux=True)(self.network.params)
+    #     new_network_state = self.network.apply_gradients(grads=grads)
+        
+    #     return self.replace(network=new_network_state, rng=new_rng), info
 
     @jax.jit
     def sample_actions(
@@ -326,7 +321,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         )['params']
 
         # Added learning rate decay and grdient clipping
-        total_steps, warmup_steps = 1_000_000, 10000
+        total_steps, warmup_steps = 1_000_000, 0
         encoder_lr_schedule = optax.join_schedules(
         schedules=[
                 # warmup phase: from 0 → base_lr
