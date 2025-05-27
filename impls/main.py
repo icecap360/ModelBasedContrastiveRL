@@ -119,7 +119,7 @@ def main(_):
         agent = agent.update_encoder_target_soft(i)
         batch_queue.append(batch)
 
-        if len(batch_queue) == 250:
+        if len(batch_queue) == 1000:
             rl_info = {}
             for batch in batch_queue:
                 agent, rl_info = agent.update(batch)
