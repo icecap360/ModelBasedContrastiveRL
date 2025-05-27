@@ -185,7 +185,7 @@ class GCModelBasedActor(nn.Module):
             zs_obs = self.encoder_module_def.apply(
                 {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
             )          
-            inputs = [zs_obs, observations]
+            inputs = [zs_obs]
             if goals is not None:
                 inputs.append(goals)
                 inputs.append(self.encoder_module_def.apply(
@@ -254,14 +254,14 @@ class GCBilinearModelBasedValue(nn.Module):
         zsa = self.encoder_module_def.apply(
             {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
         )
-        zsa = jnp.concatenate([zs, zsa, observations, actions], axis=-1)
+        zsa = jnp.concatenate([zsa], axis=-1)
         zsa = self.norm(zsa)
 
 
         zs_goals = self.encoder_module_def.apply(
             {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
         )
-        zs_goals = jnp.concatenate([zs_goals, goals], axis=-1)
+        zs_goals = jnp.concatenate([zs_goals], axis=-1)
         zs_goals = self.norm_goals(zs_goals)
 
         # zsa = jnp.concatenate([observations, actions], axis=-1)
