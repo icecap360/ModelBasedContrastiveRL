@@ -117,7 +117,7 @@ def main(_):
         agent, update_info = agent.update_encoder(batch, i)
         agent = agent.update_encoder_target_soft(i)
         
-        if i >= 0:
+        if i >= 250_000:
             agent, rl_info = agent.update(batch)
             update_info.update(rl_info)
             agent = agent.update_critic_target_soft(i)
