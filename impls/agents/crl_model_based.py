@@ -47,7 +47,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 goals=batch['value_goals'],
                 actions=actions,
                 info=True,
-                encoder_params=self.encoder_target_params, # Pass shared encoder's ONLINE parameters
+                encoder_params=self.encoder.params, # Pass shared encoder's ONLINE parameters
                 params=grad_params,
             )     
         else:
@@ -111,7 +111,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             params= grad_params,
             observations= batch['observations'],
             goals=batch['actor_goals'],
-            encoder_params=self.encoder_target_params, # Pass shared encoder's TARGET parameters
+            encoder_params=self.encoder.params, # Pass shared encoder's TARGET parameters
             )
         value_transform_fn = lambda x: jnp.log(jnp.maximum(x, 1e-6)) if self.config['actor_log_q'] else lambda x: x
 
@@ -128,7 +128,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             v1, v2 = self.network.select('critic')(
                 observations=batch['observations'], 
                 goals=batch['actor_goals'], actions=q_actions,
-                encoder_params =self.encoder_target_params, # Shared TARGET encoder params
+                encoder_params =self.encoder.params, # Shared TARGET encoder params
             )
             v = jnp.minimum(v1, v2)
 
@@ -144,7 +144,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             q1, q2 = value_transform(self.network.select('critic')(
                 observations=batch['observations'], 
                 goals=batch['actor_goals'], actions=q_actions,
-                encoder_params =self.encoder_target_params, # Shared TARGET encoder params
+                encoder_params =self.encoder.params, # Shared TARGET encoder params
             ))
             q = jnp.minimum(q1, q2)
             q_loss = -q.mean() / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
@@ -261,7 +261,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         """Sample actions from the actor."""
         dist = self.network.select('actor')(
             observations, goals, temperature=temperature,
-            encoder_params =self.encoder_target_params, # Pass shared encoder's TARGET parameters
+            encoder_params =self.encoder.params, # Pass shared encoder's TARGET parameters
             )
         actions = dist.sample(seed=seed)
         if not self.config['discrete']:
@@ -542,7 +542,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         teacher_temp = self.teacher_temp_schedule(step)
         encoder_loss = compute_dino_style_encoder_loss_core(
             online_encoder_params=online_encoder_params,
-            target_encoder_params=self.encoder_target_params,
+            target_encoder_params=self.encoder.params,
             encoder_module_def=self.encoder_module_def,
             states=batch_for_encoder['stacked_observations'], 
             next_states=batch_for_encoder['stacked_next_observations'],
