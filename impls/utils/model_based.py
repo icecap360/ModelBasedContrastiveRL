@@ -189,7 +189,7 @@ class GCModelBasedActor(nn.Module):
             if goals is not None:
                 inputs.append(goals)
                 inputs.append(self.encoder_module_def.apply(
-                        {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
+                        {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
                     ))
             inputs = jnp.concatenate(inputs, axis=-1)
         inputs = self.norm(inputs)
