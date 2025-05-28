@@ -125,12 +125,12 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             else:
                 q_actions = jnp.clip(dist.sample(seed=rng), -1, 1)
 
-            v1, v2 = self.network.select('critic')(
+            v = self.network.select('critic')(
                 observations=batch['observations'], 
                 goals=batch['actor_goals'], actions=q_actions,
                 encoder_params =self.encoder_target_params, # Shared TARGET encoder params
             )
-            v = jnp.minimum(v1, v2)
+            # v = jnp.minimum(v1, v2)
 
             # q1, q2 = self.critic_module_def.apply(
             #     {'params': self.critic_target_params},
@@ -141,12 +141,12 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             #     mutable=False,      # or whatever you need
             #     method=self.critic_module_def.__call__,
             # )
-            q1, q2 = value_transform(self.network.select('critic')(
+            q = value_transform(self.network.select('critic')(
                 observations=batch['observations'], 
                 goals=batch['actor_goals'], actions=q_actions,
                 encoder_params =self.encoder_target_params, # Shared TARGET encoder params
             ))
-            q = jnp.minimum(q1, q2)
+            # q = jnp.minimum(q1, q2)
             q_loss = -q.mean() / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
             log_prob = dist.log_prob(batch['actions'])
             bc_loss = -(self.config['alpha'] * log_prob).mean()
@@ -444,7 +444,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         main_network_train_state = TrainState.create(
             model_def=main_agent_module_dict, params=main_network_params, tx=main_network_tx
         )
-        critic_target_params = flax.core.FrozenDict(main_network_params['modules_critic']) # Copy critic params for target
+        # critic_target_params = flax.core.FrozenDict(main_network_params['modules_critic']) # Copy critic params for target
         
         return cls(
             rng=rng, network=main_network_train_state, 
@@ -452,7 +452,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             critic_module_def=critic_def,
             encoder=encoder_train_state, 
             encoder_target_params=encoder_target_params,
-            critic_target_params = critic_target_params,
+            critic_target_params = None,
             config=flax.core.FrozenDict(config) if isinstance(config, ml_collections.ConfigDict) else config,
             teacher_center=jnp.zeros(shared_encoder_module_def.num_bins),
             momentum_schedule=momentum_schedule,
@@ -629,6 +629,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         Soft‐update the target encoder parameters via EMA:
             new_target = decay * old_target + (1 - decay) * online_params
         """
+        return self
         decay = self.momentum_schedule(step)
         target_dict = unfreeze(self.critic_target_params)
         online_dict = unfreeze(self.network.params['modules_critic'])

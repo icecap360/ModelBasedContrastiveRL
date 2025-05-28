@@ -254,24 +254,26 @@ class GCBilinearModelBasedValue(nn.Module):
         zsa = self.encoder_module_def.apply(
             {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
         )
-        zsa = jnp.concatenate([zs, zsa, observations, actions], axis=-1)
-        zsa = self.norm(zsa)
+        # zsa = jnp.concatenate([zs, zsa, observations, actions], axis=-1)
+        # zsa = self.norm(zsa)
 
 
         zs_goals = self.encoder_module_def.apply(
             {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
         )
-        zs_goals = jnp.concatenate([zs_goals, goals], axis=-1)
-        zs_goals = self.norm_goals(zs_goals)
+        # zs_goals = jnp.concatenate([zs_goals, goals], axis=-1)
+        # zs_goals = self.norm_goals(zs_goals)
 
         # zsa = jnp.concatenate([observations, actions], axis=-1)
         # zs_goals = goals
 
-        phi_output_raw = self.phi_mlp(zsa) 
-        psi_output_raw = self.psi_mlp(zs_goals)
+        # phi_output_raw = self.phi_mlp(zsa) 
+        phi_output_raw = zsa 
+        psi_output_raw = zs_goals
+        # self.ensemble = False
 
         num_ensembles = 2 if self.ensemble else 1
-        if self.ensemble:
+        if False:
             # Reshape to (num_ensembles, batch, latent_dim)
             phi_output = phi_output_raw.reshape(-1, num_ensembles, self.latent_dim).transpose(1,0,2)
             psi_output = psi_output_raw.reshape(-1, num_ensembles, self.latent_dim).transpose(1,0,2)
