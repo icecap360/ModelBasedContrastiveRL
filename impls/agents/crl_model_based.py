@@ -440,7 +440,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
 
         main_agent_module_dict = ModuleDict(network_components)
         main_network_params = main_agent_module_dict.init(actor_critic_rng_main, **network_init_args)['params']
-        main_network_tx = optax.adam(learning_rate=config.lr)
+        main_network_tx = optax.adamw(learning_rate=config.lr)
         main_network_train_state = TrainState.create(
             model_def=main_agent_module_dict, params=main_network_params, tx=main_network_tx
         )
@@ -650,7 +650,7 @@ def get_config():
         dict(
             # Agent hyperparameters.
             agent_name='crl_model_based',  # Agent name.
-            lr=3e-4,  # Learning rate.
+            lr=8e-5,  # Learning rate.
             batch_size=1024,  # Batch size.
             actor_hidden_dims=(512, 512, 512),  # Actor network hidden dimensions.
             value_hidden_dims=(512, 512, 512),  # Value network hidden dimensions.
@@ -658,7 +658,7 @@ def get_config():
             layer_norm=True,  # Whether to use layer normalization.
             discount=0.99,  # Discount factor.
             actor_loss='ddpgbc',  # Actor loss type ('awr' or 'ddpgbc').
-            alpha=0.2,  # Temperature in AWR or BC coefficient in DDPG+BC.
+            alpha=1.0,  # Temperature in AWR or BC coefficient in DDPG+BC.
             actor_log_q=True,  # Whether to maximize log Q (True) or Q itself (False) in the actor loss.
             const_std=True,  # Whether to use constant standard deviation for the actor.
             discrete=False,  # Whether the action space is discrete.
@@ -677,7 +677,7 @@ def get_config():
             p_aug=0.0,  # Probability of applying image augmentation.
             frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
             dyn_weight = 1.0,
-            encoder_lr = 3e-4,
+            encoder_lr = 2e-4,
             encoder_zs_dim = 512,
             pixel_obs_encoder = False,
             encoder_za_dim = 256,
