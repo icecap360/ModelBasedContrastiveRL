@@ -344,7 +344,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             ],
             boundaries=[warmup_steps],
         )
-        encoder_optimizer = optax.adamw(learning_rate=config.encoder_lr)
+        encoder_optimizer = optax.adamw(learning_rate=encoder_lr_schedule)
         encoder_train_state = TrainState.create(
             model_def=shared_encoder_module_def,
             params=initial_encoder_params, 
@@ -440,7 +440,10 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
 
         main_agent_module_dict = ModuleDict(network_components)
         main_network_params = main_agent_module_dict.init(actor_critic_rng_main, **network_init_args)['params']
-        main_network_tx = optax.adamw(learning_rate=config.lr)
+        main_network_tx = optax.chain(
+            optax.clip_by_global_norm(config.get('ac_max_grad_norm', 1.0)), # Add to config
+            optax.adamw(learning_rate=config.lr)
+        )
         main_network_train_state = TrainState.create(
             model_def=main_agent_module_dict, params=main_network_params, tx=main_network_tx
         )
@@ -585,7 +588,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
 
         new_encoder_state = self.encoder.apply_gradients(grads=grads)
         # Teacher center update
-        decay = self.momentum_schedule(step)
+        decay = 0.9 # self.momentum_schedule(step)
         new_teacher_center = (1 - decay) * self.teacher_center + \
                          decay * info['current_batch_avg_teacher_logits']
         info.pop('current_batch_avg_teacher_logits', None)
@@ -650,7 +653,7 @@ def get_config():
         dict(
             # Agent hyperparameters.
             agent_name='crl_model_based',  # Agent name.
-            lr=8e-5,  # Learning rate.
+            lr=1e-4,  # Learning rate.
             batch_size=1024,  # Batch size.
             actor_hidden_dims=(512, 512, 512),  # Actor network hidden dimensions.
             value_hidden_dims=(512, 512, 512),  # Value network hidden dimensions.
