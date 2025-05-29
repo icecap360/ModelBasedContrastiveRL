@@ -129,11 +129,7 @@ def main(_):
         # Update agent.
         batch = train_dataset.sample(config['batch_size'])
         update_info = {}
-        rl_info = {}
-        for batch in batch_queue:
-            agent, rl_info = agent.update(batch)
-            agent = agent.update_critic_target_soft(i)
-        update_info.update(rl_info)
+        agent, update_info = agent.update(batch)
 
         progress_bar.update(1)
         i += 1

@@ -438,6 +438,10 @@ def compute_dino_style_encoder_loss_core(
     return total_encoder_loss, {
         'encoder_loss_total': total_encoder_loss,
         'encoder_avg_step_ce': avg_ce_loss_per_step,
+        'max_final_zs': jnp.max(final_pred_zs_continuous), # Max norm of final predicted zs
+        'min_final_zs': jnp.min(final_pred_zs_continuous), # Max norm of final predicted zs
+        'mean_final_zs': jnp.mean(final_pred_zs_continuous), # Max norm of final predicted zs
+        'std_final_zs': jnp.std(final_pred_zs_continuous), # Max norm of final predicted zs
         'ce_losses_per_step': ce_losses_per_step, # For logging if desired
         'current_batch_avg_teacher_logits': current_batch_avg_teacher_logits,
     }
