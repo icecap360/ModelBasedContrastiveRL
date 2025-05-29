@@ -184,13 +184,19 @@ class GCModelBasedActor(nn.Module):
             # --- Use the shared ModelBasedEncoder ---
             zs_obs = self.encoder_module_def.apply(
                 {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
-            )          
+            )  
+            zs_obs = jax.nn.softmax(self.encoder_module_def.apply(
+                {'params': encoder_params}, zs_obs, method=ModelBasedEncoder.get_discrete_logits_zs
+            ))
             inputs = [zs_obs, observations]
             if goals is not None:
                 inputs.append(goals)
-                inputs.append(self.encoder_module_def.apply(
+                zs_goals = self.encoder_module_def.apply(
                         {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
-                    ))
+                    )
+                inputs.append(jax.nn.softmax(self.encoder_module_def.apply(
+                        {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
+                    )))
             inputs = jnp.concatenate(inputs, axis=-1)
         inputs = self.norm(inputs)
         outputs = self.actor_net(inputs)
@@ -254,6 +260,9 @@ class GCBilinearModelBasedValue(nn.Module):
         zsa = self.encoder_module_def.apply(
             {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
         )
+        zs = jax.nn.softmax(self.encoder_module_def.apply(
+            {'params': encoder_params}, zs, method=ModelBasedEncoder.get_discrete_logits_zs
+        ))
         zsa = jnp.concatenate([zs, zsa, observations, actions], axis=-1)
         zsa = self.norm(zsa)
 
@@ -261,6 +270,9 @@ class GCBilinearModelBasedValue(nn.Module):
         zs_goals = self.encoder_module_def.apply(
             {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
         )
+        zs_goals = jax.nn.softmax(self.encoder_module_def.apply(
+            {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
+        ))
         zs_goals = jnp.concatenate([zs_goals, goals], axis=-1)
         zs_goals = self.norm_goals(zs_goals)
 
