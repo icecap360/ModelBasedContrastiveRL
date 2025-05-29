@@ -115,8 +115,8 @@ def main(_):
         # Update agent.
         batch = train_dataset.sample(config['batch_size'])
         update_info = {}
-        agent, update_info = agent.update_encoder(batch, i)
-        agent = agent.update_encoder_target_soft(i)
+        # agent, update_info = agent.update_encoder(batch, i)
+        # agent = agent.update_encoder_target_soft(i)
         batch_queue.append(batch)
 
         if len(batch_queue) == 250:
