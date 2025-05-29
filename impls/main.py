@@ -104,7 +104,9 @@ def main(_):
     
     progress_bar = tqdm.tqdm(total=FLAGS.train_steps, smoothing=0.1, dynamic_ncols=True)
 
-    for i in range(1_000_000):
+    pretrain_steps = 1_000_000
+    log_interval =  FLAGS.log_interval
+    for j in range(pretrain_steps):
         # CRL Main Loop
         # batch = train_dataset.sample(config['batch_size'])
         # agent, update_info = agent.update(batch)
@@ -114,8 +116,11 @@ def main(_):
         # Update agent.
         batch = train_dataset.sample(config['batch_size'])
         update_info = {}
-        agent, update_info = agent.update_encoder(batch, i)
-        agent = agent.update_encoder_target_soft(i)
+        agent, update_info = agent.update_encoder(batch, j)
+        agent = agent.update_encoder_target_soft(j)
+        train_metrics = {f'training/{k}': v for k, v in update_info.items()}
+        if j % log_interval == 0:
+            wandb.log(train_metrics, step=j)
 
     i = 0
     batch_queue = []
@@ -160,7 +165,7 @@ def main(_):
         #         i += 1
         #     update_info.update(encoder_update_info)
         # Log metrics.
-        if i % FLAGS.log_interval == 0:
+        if i % log_interval == 0:
             train_metrics = {f'training/{k}': v for k, v in update_info.items()}
             if val_dataset is not None:
                 val_batch = val_dataset.sample(config['batch_size'])
@@ -169,8 +174,8 @@ def main(_):
             train_metrics['time/epoch_time'] = (time.time() - last_time) / FLAGS.log_interval
             train_metrics['time/total_time'] = time.time() - first_time
             last_time = time.time()
-            wandb.log(train_metrics, step=i)
-            train_logger.log(train_metrics, step=i)
+            wandb.log(train_metrics, step=i+ pretrain_steps)
+            train_logger.log(train_metrics, step=i + pretrain_steps)
 
         # Evaluate agent.
         if i % FLAGS.eval_interval == 0: # or i == 1 
