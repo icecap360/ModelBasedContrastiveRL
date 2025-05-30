@@ -196,13 +196,19 @@ class GCModelBasedActor(nn.Module):
             # --- Use the shared ModelBasedEncoder ---
             zs_obs = self.encoder_module_def.apply(
                 {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
-            )          
+            )        
+            zs_obs = self.encoder_module_def.apply(
+                {'params': encoder_params}, zs_obs, method=ModelBasedEncoder.get_discrete_logits_zs
+            )       
             inputs = [zs_obs]
             if goals is not None:
-                # inputs.append(goals)
-                inputs.append(self.encoder_module_def.apply(
+                zs_goals = self.encoder_module_def.apply(
                         {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
-                    ))
+                    )
+                zs_goals = self.encoder_module_def.apply(
+                        {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
+                    )
+                inputs.append(zs_goals)
             inputs = jnp.concatenate(inputs, axis=-1)
         inputs = self.norm(inputs)
         outputs = self.actor_net(inputs)
@@ -273,6 +279,9 @@ class GCBilinearModelBasedValue(nn.Module):
         zs_goals = self.encoder_module_def.apply(
             {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
         )
+        zs_goals = self.encoder_module_def.apply(
+            {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
+        )
         # zs_goals = jnp.concatenate([zs_goals], axis=-1)
         zs_goals = self.norm_goals(zs_goals)
 
@@ -340,7 +349,7 @@ def compute_state_encoder_loss_core(
     encoder_module_def: ModelBasedEncoder, states: jnp.ndarray, actions: jnp.ndarray,
     teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
     teacher_temp: float = 0.2,
-    student_temp: float = 1.0,
+    student_temp: float = 0.1,
 ):
     batch_size = states.shape[0]; zs_dim = encoder_module_def.zs_dim; state_shape = states.shape[2:]
     # flat_next_states = next_states.reshape(-1, *state_shape) 
