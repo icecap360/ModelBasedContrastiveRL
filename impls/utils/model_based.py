@@ -62,14 +62,15 @@ class ModelBasedEncoder(nn.Module):
             self._zs_lin = nn.Dense(features=self.zs_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)
             self.zs_encoder_fn = self._cnn_zs
         else:
-            self._zs_mlp = MLP((self.zs_dim, self.zs_dim, self.zs_dim), activate_final=False, layer_norm=True) # ModelBasedMLP(output_dim=self.zs_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name)
+            self._zs_mlp = ModelBasedMLP(output_dim=self.zs_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name) # ModelBasedMLP((self.zs_dim, self.zs_dim, self.zs_dim), activate_final=False, layer_norm=True)
             self.zs_encoder_fn = self._mlp_zs
 
         self._za_lin = nn.Dense(features=self.za_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)
-        self._zsa_mlp = MLP((self.zsa_dim, self.zsa_dim, self.zsa_dim), activate_final=False, layer_norm=True)# ModelBasedMLP(output_dim=self.zsa_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name)
+        self._zsa_mlp = ModelBasedMLP(output_dim=self.zsa_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name)
         self._output_next_zs = nn.Dense(features=self.zs_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)
         self._to_logits_head_zs = nn.Dense(features=self.num_bins, kernel_init=default_kernel_init, bias_init=default_bias_init, name="to_logits_head")
         self._to_logits_head_zsa = nn.Dense(features=self.num_bins, kernel_init=default_kernel_init, bias_init=default_bias_init, name="to_logits_head_zsa")
+        self._rewards = nn.Dense(features=2, kernel_init=default_kernel_init, bias_init=default_bias_init)
 
     @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
     def get_discrete_logits_zs(self, zs_continuous: jnp.ndarray) -> jnp.ndarray:
@@ -80,8 +81,16 @@ class ModelBasedEncoder(nn.Module):
     @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
     def get_discrete_logits_zsa(self, zsa_continuous: jnp.ndarray) -> jnp.ndarray:
         """Converts continuous state embeddings (zs) to logits for discrete bins."""
+        zsa_continuous = LnActiv(activation=self.activ_fn, name="get_zsa_continuous_ln_activ")(zsa_continuous)  # Ensure activation is applied
         logits = self._to_logits_head_zsa(zsa_continuous)
-        return logits
+        return l2_normalize(logits)
+
+    @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
+    def get_rewards(self, zs: jnp.ndarray) -> jnp.ndarray:
+        """Converts continuous state embeddings (zs) to logits for discrete bins."""
+        zs = LnActiv(activation=self.activ_fn, name="get_reward_ln_activ")(zs)  # Ensure activation is applied
+        logits = self._rewards(zs)
+        return l2_normalize(logits)
 
     @nn.compact  # <--- ADDED @nn.compact
     def _cnn_zs(self, state: jnp.ndarray) -> jnp.ndarray:
@@ -109,10 +118,12 @@ class ModelBasedEncoder(nn.Module):
         # zs_normalized = zs / norm
         return zs
 
+    @nn.compact  # <--- ADDED @nn.compact
     def __call__(self, zs: jnp.ndarray, action: jnp.ndarray) -> jnp.ndarray:
         za = self.activ_fn(self._za_lin(action))
+        zs = LnActiv(activation=self.activ_fn, name="call_zs_ln_activ")(zs)
         zsa_input = jnp.concatenate([zs, za], axis=-1)
-        return self._zsa_mlp(zsa_input)
+        return l2_normalize(self._zsa_mlp(zsa_input))
 
     def model_all(self, zs: jnp.ndarray, action: jnp.ndarray):
         zsa = self.__call__(zs, action)
@@ -123,6 +134,7 @@ class ModelBasedEncoder(nn.Module):
         zs_example = self.encode_state(state_example)
         self.model_all(zs_example, action_example)
         self.get_discrete_logits_zs(zs_example)
+        self.get_rewards(zs_example)
         # self.get_discrete_logits_zsa(zs_example)
         return zs_example
 
@@ -185,9 +197,9 @@ class GCModelBasedActor(nn.Module):
             zs_obs = self.encoder_module_def.apply(
                 {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
             )          
-            inputs = [zs_obs, observations]
+            inputs = [zs_obs]
             if goals is not None:
-                inputs.append(goals)
+                # inputs.append(goals)
                 inputs.append(self.encoder_module_def.apply(
                         {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
                     ))
@@ -254,14 +266,14 @@ class GCBilinearModelBasedValue(nn.Module):
         zsa = self.encoder_module_def.apply(
             {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
         )
-        zsa = jnp.concatenate([zs, zsa, observations, actions], axis=-1)
+        # zsa = jnp.concatenate([observations, actions], axis=-1)
         zsa = self.norm(zsa)
 
 
         zs_goals = self.encoder_module_def.apply(
             {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
         )
-        zs_goals = jnp.concatenate([zs_goals, goals], axis=-1)
+        # zs_goals = jnp.concatenate([zs_goals], axis=-1)
         zs_goals = self.norm_goals(zs_goals)
 
         # zsa = jnp.concatenate([observations, actions], axis=-1)
@@ -365,11 +377,12 @@ def compute_dino_style_encoder_loss_core(
     actions: jnp.ndarray, # Shape: (batch_size, horizon, action_dim)
     # next_states is implicitly states[:, 1:]
     # not_done_mask: jnp.ndarray, # Shape: (batch_size, horizon) - can be used to mask loss
+    rewards: jnp.ndarray, # Shape: (batch_size, horizon) - can be used to mask loss
     enc_horizon: int,
     dyn_weight: float, # Weight for the overall dynamics distillation loss
     teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
     teacher_temp: float = 0.04,
-    student_temp: float = 1.0,
+    student_temp: float = 0.1,
     key: Optional[jax.random.PRNGKey] = None, # For any stochastic ops if needed (not for this CE loss)
     next_states=None
 ):
@@ -393,7 +406,7 @@ def compute_dino_style_encoder_loss_core(
         {'params': online_encoder_params}, initial_states_for_online_encoder, method=ModelBasedEncoder.encode_state
     )
 
-    centered_target_logits = target_logits_horizon #- teacher_center # Broadcasting teacher_center
+    centered_target_logits = target_logits_horizon - teacher_center # Broadcasting teacher_center
     
     # p_target_horizon will be (batch_size, horizon, num_bins)
     p_target_horizon = jax.nn.softmax(centered_target_logits / teacher_temp, axis=-1)
@@ -412,6 +425,11 @@ def compute_dino_style_encoder_loss_core(
             {'params': online_encoder_params}, pred_next_zs_continuous, method=ModelBasedEncoder.get_discrete_logits_zs
         )
         
+        # Student converts its predicted z^_{t+1} to logits
+        reward_logits_step = encoder_module_def.apply(
+            {'params': online_encoder_params}, carry_pred_zs_continuous, method=ModelBasedEncoder.get_rewards
+        )
+
         # Target probabilities for this step
         p_target_step = p_target_horizon[:, i, :] # Shape: (batch_size, num_bins)
         
@@ -421,6 +439,10 @@ def compute_dino_style_encoder_loss_core(
         step_ce_loss = -jnp.sum(p_target_step * log_p_student_step, axis=-1) # Sum over bins
         mean_step_ce_loss = jnp.mean(step_ce_loss) # Mean over batch
         
+        log_p_student_step = jax.nn.log_softmax(reward_logits_step, axis=-1)
+        step_reward_loss = binary_cross_entropy_from_logits(logits=reward_logits_step, labels=rewards[:,i])
+        mean_step_ce_loss += jnp.mean(step_reward_loss)*0.1 # Mean over batch
+
         # Carry student's predicted next continuous state for the next iteration
         return pred_next_zs_continuous, mean_step_ce_loss
 
@@ -438,9 +460,18 @@ def compute_dino_style_encoder_loss_core(
     return total_encoder_loss, {
         'encoder_loss_total': total_encoder_loss,
         'encoder_avg_step_ce': avg_ce_loss_per_step,
+        'max_final_zs': jnp.max(final_pred_zs_continuous), # Max norm of final predicted zs
+        'min_final_zs': jnp.min(final_pred_zs_continuous), # Min norm of final predicted zs
+        'mean_final_zs': jnp.mean(final_pred_zs_continuous), # Mean norm of final predicted zs
+        'std_final_zs': jnp.std(final_pred_zs_continuous), # Std norm of final predicted zs
         'ce_losses_per_step': ce_losses_per_step, # For logging if desired
         'current_batch_avg_teacher_logits': current_batch_avg_teacher_logits,
     }
+
+def binary_cross_entropy_from_logits(logits, labels):
+    log_probs = jax.nn.log_softmax(logits)
+    labels = labels.astype(jnp.int32)
+    return -jnp.take_along_axis(log_probs, labels[:, None], axis=1).squeeze()
 
 def sample_gumbel(key, shape, eps=1e-20):
     """Sample from Gumbel(0, 1)"""

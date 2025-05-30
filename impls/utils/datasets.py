@@ -253,7 +253,9 @@ class GCDataset:
         successes = (idxs == value_goal_idxs).astype(float)
         batch['masks'] = 1.0 - successes
         batch['rewards'] = successes - (1.0 if self.config['gc_negative'] else 0.0)
-
+        if self.config['frame_stack'] is not None:
+            stacked_rewards = jnp.stack([(idxs - i) == value_goal_idxs for i in range(self.config['frame_stack'] - 1, -1, -1)], axis=1)
+            batch['stacked_rewards'] = stacked_rewards
         if self.config['p_aug'] is not None and not evaluation:
             if np.random.rand() < self.config['p_aug']:
                 self.augment(batch, ['observations', 'next_observations', 'value_goals', 'actor_goals'])
@@ -323,6 +325,20 @@ class GCDataset:
         else:
             return self.get_stacked_actions(idxs)
 
+    def get_rewards(self, idxs):
+        """Return the observations for the given indices."""
+        if self.config['frame_stack'] is None or self.preprocess_frame_stack:
+            return jax.tree_util.tree_map(lambda arr: arr[idxs], self.dataset['rewards'])
+        else:
+            return self.get_stacked_actions(idxs)
+
+    def get_stacked_arr(self, idxs, arr1):
+        """Return the observations for the given indices."""
+        if self.config['frame_stack'] is None or self.preprocess_frame_stack:
+            return jax.tree_util.tree_map(lambda arr: arr[idxs], arr1)
+        else:
+            raise NotImplementedError()
+            return self.get_stacked_actions(idxs)
     def get_stacked_actions(self, idxs):
         """Return the frame-stacked observations for the given indices."""
         initial_state_idxs = self.initial_locs[np.searchsorted(self.initial_locs, idxs, side='right') - 1]
