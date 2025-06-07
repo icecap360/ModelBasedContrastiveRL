@@ -116,16 +116,11 @@ def main(_):
         batch = train_dataset.sample(config['batch_size'])
         update_info = {}
         agent, update_info = agent.update_encoder(batch, i)
-        agent = agent.update_encoder_target_soft(i)
-        batch_queue.append(batch)
 
-        if len(batch_queue) == 250:
-            rl_info = {}
-            for batch in batch_queue:
-                agent, rl_info = agent.update(batch)
-                agent = agent.update_critic_target_soft(i)
-            update_info.update(rl_info)
-            batch_queue = []
+        agent, rl_info = agent.update(batch)
+        update_info.update(rl_info)
+        if i % 250 == 0:
+            agent = agent.update_encoder_target_hard(i)
 
         progress_bar.update(1)
         i += 1

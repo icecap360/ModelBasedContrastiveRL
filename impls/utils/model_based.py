@@ -90,7 +90,7 @@ class ModelBasedEncoder(nn.Module):
         """Converts continuous state embeddings (zs) to logits for discrete bins."""
         zs = LnActiv(activation=self.activ_fn, name="get_reward_ln_activ")(zs)  # Ensure activation is applied
         logits = self._rewards(zs)
-        return l2_normalize(logits)
+        return logits
 
     @nn.compact  # <--- ADDED @nn.compact
     def _cnn_zs(self, state: jnp.ndarray) -> jnp.ndarray:
@@ -114,8 +114,8 @@ class ModelBasedEncoder(nn.Module):
 
     def encode_state(self, state: jnp.ndarray) -> jnp.ndarray:
         zs = self.zs_encoder_fn(state)
-        # norm = jnp.linalg.norm(zs, axis=-1, keepdims=True) + 1e-6
-        # zs_normalized = zs / norm
+        norm = jnp.mean(jnp.abs(zs), axis=-1, keepdims=True) + 1e-6
+        zs = zs / norm
         return zs
 
     @nn.compact  # <--- ADDED @nn.compact
@@ -123,7 +123,7 @@ class ModelBasedEncoder(nn.Module):
         za = self.activ_fn(self._za_lin(action))
         zs = LnActiv(activation=self.activ_fn, name="call_zs_ln_activ")(zs)
         zsa_input = jnp.concatenate([zs, za], axis=-1)
-        return l2_normalize(self._zsa_mlp(zsa_input))
+        return self._zsa_mlp(zsa_input)
 
     def model_all(self, zs: jnp.ndarray, action: jnp.ndarray):
         zsa = self.__call__(zs, action)
@@ -167,6 +167,7 @@ class GCModelBasedActor(nn.Module):
     def setup(self):
         self.actor_net = MLP(self.hidden_dims, activate_final=True)
         self.mean_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
+        self.sale_state_action = nn.Dense(512, kernel_init=default_init(self.final_fc_init_scale))
         self.norm = LnActiv(activation=nn.gelu) # This is fine as BaseMLP.__call__ is @nn.compact
         if self.state_dependent_std:
             self.log_std_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
@@ -196,19 +197,16 @@ class GCModelBasedActor(nn.Module):
             # --- Use the shared ModelBasedEncoder ---
             zs_obs = self.encoder_module_def.apply(
                 {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
-            )        
-            zs_obs = self.encoder_module_def.apply(
-                {'params': encoder_params}, zs_obs, method=ModelBasedEncoder.get_discrete_logits_zs
-            )       
-            inputs = [zs_obs]
+            )         
+            state_action = self.sale_state_action(jnp.concatenate([observations], axis=-1)) 
+            state_action  = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
+            inputs = [zs_obs, state_action]
             if goals is not None:
                 zs_goals = self.encoder_module_def.apply(
                         {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
                     )
-                zs_goals = self.encoder_module_def.apply(
-                        {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
-                    )
                 inputs.append(zs_goals)
+                inputs.append(goals)
             inputs = jnp.concatenate(inputs, axis=-1)
         inputs = self.norm(inputs)
         outputs = self.actor_net(inputs)
@@ -245,7 +243,7 @@ class GCBilinearModelBasedValue(nn.Module):
         mlp_module = MLP
         output_dim_phi_psi = self.latent_dim
         mlp_module = ensemblize(mlp_module, 2)
-
+        self.sale_state_action = nn.Dense(512, kernel_init=default_init(1e-2))
         self.phi_mlp = mlp_module((*self.hidden_dims, output_dim_phi_psi), activate_final=False, layer_norm=self.layer_norm)
         self.psi_mlp = mlp_module((*self.hidden_dims, output_dim_phi_psi), activate_final=False, layer_norm=self.layer_norm)
         activ_fn = getattr(nn, self.activ_fn_name)
@@ -272,9 +270,9 @@ class GCBilinearModelBasedValue(nn.Module):
         zsa = self.encoder_module_def.apply(
             {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
         )
-        # zsa = jnp.concatenate([observations, actions], axis=-1)
-        zsa = self.norm(zsa)
-
+        state_action = self.sale_state_action(jnp.concatenate([observations, actions], axis=-1)) 
+        state_action  = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
+        zsa = jnp.concatenate([state_action, zsa, zs], axis=-1)
 
         zs_goals = self.encoder_module_def.apply(
             {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
@@ -282,8 +280,8 @@ class GCBilinearModelBasedValue(nn.Module):
         zs_goals = self.encoder_module_def.apply(
             {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
         )
-        # zs_goals = jnp.concatenate([zs_goals], axis=-1)
-        zs_goals = self.norm_goals(zs_goals)
+        zs_goals = jnp.concatenate([goals, zs_goals], axis=-1)
+        # zs_goals = self.norm_goals(zs_goals)
 
         # zsa = jnp.concatenate([observations, actions], axis=-1)
         # zs_goals = goals
@@ -349,7 +347,7 @@ def compute_state_encoder_loss_core(
     encoder_module_def: ModelBasedEncoder, states: jnp.ndarray, actions: jnp.ndarray,
     teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
     teacher_temp: float = 0.2,
-    student_temp: float = 0.1,
+    student_temp: float = 1.0,
 ):
     batch_size = states.shape[0]; zs_dim = encoder_module_def.zs_dim; state_shape = states.shape[2:]
     # flat_next_states = next_states.reshape(-1, *state_shape) 
