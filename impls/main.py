@@ -119,6 +119,7 @@ def main(_):
 
         agent, rl_info = agent.update(batch)
         update_info.update(rl_info)
+
         if i % 250 == 0:
             agent = agent.update_encoder_target_hard(i)
 
