@@ -274,13 +274,13 @@ class GCBilinearModelBasedValue(nn.Module):
         state_action  = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
         zsa = jnp.concatenate([state_action, zsa, zs], axis=-1)
 
-        zs_goals = self.encoder_module_def.apply(
-            {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
-        )
-        zs_goals = self.encoder_module_def.apply(
-            {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
-        )
-        zs_goals = jnp.concatenate([goals, zs_goals], axis=-1)
+        # zs_goals = self.encoder_module_def.apply(
+        #     {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
+        # )
+        # zs_goals = self.encoder_module_def.apply(
+        #     {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
+        # )
+        zs_goals = goals # jnp.concatenate([goals, zs_goals], axis=-1)
         # zs_goals = self.norm_goals(zs_goals)
 
         # zsa = jnp.concatenate([observations, actions], axis=-1)
@@ -389,7 +389,7 @@ def compute_dino_style_encoder_loss_core(
     dyn_weight: float, # Weight for the overall dynamics distillation loss
     teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
     teacher_temp: float = 0.04,
-    student_temp: float = 0.1,
+    student_temp: float = 1.0,
     key: Optional[jax.random.PRNGKey] = None, # For any stochastic ops if needed (not for this CE loss)
     next_states=None
 ):

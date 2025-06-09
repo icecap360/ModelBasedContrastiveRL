@@ -117,11 +117,13 @@ def main(_):
         update_info = {}
         agent, update_info = agent.update_encoder(batch, i)
 
-        agent, rl_info = agent.update(batch)
-        update_info.update(rl_info)
-
-        if i % 250 == 0:
-            agent = agent.update_encoder_target_hard(i)
+        if i > 50_000:
+            agent, rl_info = agent.update(batch)
+            update_info.update(rl_info)
+            if i % 250 == 0:
+                agent = agent.update_encoder_target_hard(i)
+        else:
+            agent = agent.update_encoder_target_soft(i)
 
         progress_bar.update(1)
         i += 1
