@@ -31,7 +31,7 @@ flags.DEFINE_integer('restore_epoch', None, 'Restore epoch.')
 
 flags.DEFINE_integer('train_steps', 1000000, 'Number of training steps.')
 flags.DEFINE_integer('log_interval', 1000,'Logging interval')
-flags.DEFINE_integer('eval_interval', 200000, 'Evaluation interval.') # 100000
+flags.DEFINE_integer('eval_interval', 250000, 'Evaluation interval.') # 100000
 flags.DEFINE_integer('save_interval', 1000000, 'Saving interval.')
 
 flags.DEFINE_integer('eval_tasks', None, 'Number of tasks to evaluate (None for all).')
