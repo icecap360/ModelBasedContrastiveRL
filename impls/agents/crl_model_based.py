@@ -147,7 +147,8 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 encoder_params =self.encoder_target_params, # Shared TARGET encoder params
             ))
             q = jnp.minimum(q1, q2)
-            q_loss = -q.mean() / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
+            # q_loss = -q.mean() / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
+            q_loss = (-q.mean()) / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
             log_prob = dist.log_prob(batch['actions'])
             bc_loss = -(self.config['alpha'] * log_prob).mean()
             actor_loss = q_loss + bc_loss
@@ -155,6 +156,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             return actor_loss, {
                 'actor_loss': actor_loss,
                 'q_loss': q_loss,
+                'q1-q2': jnp.abs(q1 - q2).mean(),
                 'bc_loss': bc_loss,
                 'bc_log_prob': log_prob.mean(),
                 'mse': jnp.mean((dist.mode() - batch['actions']) ** 2),
