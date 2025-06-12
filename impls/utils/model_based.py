@@ -200,12 +200,12 @@ class GCModelBasedActor(nn.Module):
             )         
             state_action = self.sale_state_action(jnp.concatenate([observations], axis=-1)) 
             state_action  = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
-            inputs = [ state_action]
+            inputs = [ zs_obs, state_action]
             if goals is not None:
-                # zs_goals = self.encoder_module_def.apply(
-                #         {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
-                #     )
-                # inputs.append(zs_goals)
+                zs_goals = self.encoder_module_def.apply(
+                        {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
+                    )
+                inputs.append(zs_goals)
                 inputs.append(goals)
             inputs = jnp.concatenate(inputs, axis=-1)
         inputs = self.norm(inputs)
@@ -271,16 +271,16 @@ class GCBilinearModelBasedValue(nn.Module):
             {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
         )
         state_action = self.sale_state_action(jnp.concatenate([observations, actions], axis=-1)) 
-        state_action  = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
+        state_action = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
         zsa = jnp.concatenate([state_action, zsa, zs], axis=-1)
 
-        zs_goals = self.encoder_module_def.apply(
-            {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
-        )
+        # zs_goals = self.encoder_module_def.apply(
+        #     {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
+        # )
         # zs_goals = self.encoder_module_def.apply(
         #     {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
         # )
-        zs_goals = jnp.concatenate([goals, zs_goals], axis=-1)
+        zs_goals = jnp.concatenate([goals], axis=-1)
         # zs_goals = self.norm_goals(zs_goals)
 
         # zsa = jnp.concatenate([observations, actions], axis=-1)
