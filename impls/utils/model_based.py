@@ -347,7 +347,7 @@ def compute_state_encoder_loss_core(
     encoder_module_def: ModelBasedEncoder, states: jnp.ndarray, actions: jnp.ndarray,
     teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
     teacher_temp: float = 0.2,
-    student_temp: float = 1.0,
+    student_temp: float = 0.1,
 ):
     batch_size = states.shape[0]; zs_dim = encoder_module_def.zs_dim; state_shape = states.shape[2:]
     # flat_next_states = next_states.reshape(-1, *state_shape) 
@@ -389,7 +389,7 @@ def compute_dino_style_encoder_loss_core(
     dyn_weight: float, # Weight for the overall dynamics distillation loss
     teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
     teacher_temp: float = 0.04,
-    student_temp: float = 1.0,
+    student_temp: float = 0.1,
     key: Optional[jax.random.PRNGKey] = None, # For any stochastic ops if needed (not for this CE loss)
     next_states=None
 ):
