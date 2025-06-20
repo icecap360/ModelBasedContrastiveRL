@@ -202,10 +202,10 @@ class GCModelBasedActor(nn.Module):
             state_action  = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
             inputs = [ state_action]
             if goals is not None:
-                zs_goals = self.encoder_module_def.apply(
-                        {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
-                    )
-                inputs.append(zs_goals)
+                # zs_goals = self.encoder_module_def.apply(
+                #         {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
+                #     )
+                # inputs.append(zs_goals)
                 inputs.append(goals)
             inputs = jnp.concatenate(inputs, axis=-1)
         inputs = self.norm(inputs)
