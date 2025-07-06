@@ -117,7 +117,7 @@ def main(_):
         update_info = {}
         agent, update_info = agent.update_encoder(batch, i)
 
-        if i > 0:
+        if i > 50_000:
             agent, rl_info = agent.update(batch)
             update_info.update(rl_info)
             if i % 250 == 0:

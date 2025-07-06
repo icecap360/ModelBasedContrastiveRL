@@ -69,8 +69,8 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 info=True,
                 encoder_params=self.encoder_target_params,  # Pass shared encoder's ONLINE parameters
                 params=grad_params,
-                training=training,
-                rng=rng,
+                rngs={"dropout": rng}, 
+                # rng=rng,
             )
         else:
             actions = None
@@ -81,7 +81,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 info=True,
                 method_name=module_name,
                 training=training,
-                rng=rng,
+                rngs={"dropout": rng}, 
             )
 
         if not (
@@ -129,7 +129,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             "logits": logits.mean(),
         }
 
-    def actor_loss(self, batch, grad_params, rng=None):
+    def actor_loss(self, batch, grad_params, rngs=None):
         """Compute the actor loss (AWR or DDPG+BC)."""
         # Maximize log Q if actor_log_q is True (which is default).
         if self.config["actor_log_q"]:
@@ -167,7 +167,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 goals=batch["actor_goals"],
                 actions=q_actions,
                 encoder_params=self.encoder_target_params,  # Shared TARGET encoder params
-                rng=rng,
+                rngs=rngs,
             )
             v = jnp.minimum(v1, v2)
 
@@ -221,7 +221,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             info[f"critic/{k}"] = v
 
         rng, actor_rng = jax.random.split(rng)
-        actor_loss, actor_info = self.actor_loss(batch, grad_params, actor_rng)
+        actor_loss, actor_info = self.actor_loss(batch, grad_params, rngs={"dropout": actor_rng} )
         for k, v in actor_info.items():
             info[f"actor/{k}"] = v
 
@@ -768,10 +768,10 @@ def get_config():
             # Agent hyperparameters.
             agent_name="crl_model_based",  # Agent name.
             lr=1e-4,  # Learning rate.
-            batch_size=1536,  # Batch size.
+            batch_size=1024,  # Batch size.
             actor_hidden_dims=(512, 512, 512),  # Actor network hidden dimensions.
-            value_hidden_dims=(512, 512, 512),  # Value network hidden dimensions.
-            latent_dim=512,  # Latent dimension for phi and psi.
+            value_hidden_dims=(256, 256, 256),  # Value network hidden dimensions.
+            latent_dim=256,  # Latent dimension for phi and psi.
             layer_norm=True,  # Whether to use layer normalization.
             discount=0.99,  # Discount factor.
             actor_loss="ddpgbc",  # Actor loss type ('awr' or 'ddpgbc').
@@ -799,11 +799,11 @@ def get_config():
             ),  # Number of frames to stack.
             dyn_weight=1.0,
             encoder_lr=2e-4,
-            encoder_zs_dim=512,
+            encoder_zs_dim=256,
             pixel_obs_encoder=False,
             encoder_za_dim=256,
-            encoder_zsa_dim=512,
-            encoder_hdim=512,
+            encoder_zsa_dim=256,
+            encoder_hdim=256,
             encoder_activ_fn="elu",
             encoder_cnn_flat_size=1568,
         )

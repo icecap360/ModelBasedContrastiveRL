@@ -383,13 +383,15 @@ class GCBilinearModelBasedValue(nn.Module):
         encoder_params: flax.core.FrozenDict,  # Parameters of the shared encoder
         info: bool = False,
         training=False,  # Whether in training mode (for dropout)
-        rng=None,
+        rngs=None,
     ):
 
         if self.state_encoder is not None:  # Apply pre-encoder for observations if any
             observations = self.state_encoder(observations)
         if self.goal_encoder is not None:  # Apply pre-encoder for goals if any
             goals = self.goal_encoder(goals)
+        
+        # dropout_rng = self.make_rng("dropout")
 
         # --- Use the shared ModelBasedEncoder ---
         zs = self.encoder_module_def.apply(
@@ -397,18 +399,19 @@ class GCBilinearModelBasedValue(nn.Module):
             observations,
             method=ModelBasedEncoder.encode_state,
         )
-        # zs = self.zs_dropout(zs, deterministic=training, rng=rng)
+        
+        # zs = self.zs_dropout(zs, deterministic=dropout_rng is None)
         zsa = self.encoder_module_def.apply(
             {"params": encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
         )
-        # zsa = self.zsa_dropout(zsa, deterministic=training, rng=rng)
+        # zsa = self.zsa_dropout(zsa, deterministic=dropout_rng is None)
         state_action = self.sale_state_action(
             jnp.concatenate([observations, actions], axis=-1)
         )
         state_action = state_action / (
             jnp.mean(jnp.abs(state_action), axis=-1, keepdims=True) + 1e-6
         )
-        zsa = jnp.concatenate([state_action, zsa, zs], axis=-1)
+        # zsa = jnp.concatenate([state_action, zsa, zs], axis=-1)
 
         # zs_goals = self.encoder_module_def.apply(
         #     {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
@@ -731,8 +734,9 @@ def gumbel_softmax(logits, tau=1.0, key=None, hard=False):
 
 
 def l2_normalize(x, axis=-1, eps=1e-8):
-    norm = jnp.linalg.norm(x, axis=axis, keepdims=True)
-    return x / (norm + eps)
+    norm = jnp.linalg.norm(x, ord=2, axis=axis, keepdims=True)
+    # norm = jnp.abs(x).max((0,1))
+    return x / jax.lax.stop_gradient(norm + eps)
 
 
 # Example Usage (no changes needed here for the fix)
