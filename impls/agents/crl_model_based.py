@@ -770,8 +770,8 @@ def get_config():
             lr=1e-4,  # Learning rate.
             batch_size=1024,  # Batch size.
             actor_hidden_dims=(512, 512, 512),  # Actor network hidden dimensions.
-            value_hidden_dims=(256, 256, 256),  # Value network hidden dimensions.
-            latent_dim=256,  # Latent dimension for phi and psi.
+            value_hidden_dims=(512, 512, 512),  # Value network hidden dimensions.
+            latent_dim=512,  # Latent dimension for phi and psi.
             layer_norm=True,  # Whether to use layer normalization.
             discount=0.99,  # Discount factor.
             actor_loss="ddpgbc",  # Actor loss type ('awr' or 'ddpgbc').
