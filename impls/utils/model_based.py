@@ -297,11 +297,11 @@ class GCModelBasedActor(nn.Module):
             inputs = self.gc_encoder(observations, goals, goal_encoded=goal_encoded)
         else:
             # --- Use the shared ModelBasedEncoder ---
-            zs_obs = self.encoder_module_def.apply(
-                {"params": encoder_params},
-                observations,
-                method=ModelBasedEncoder.encode_state,
-            )
+            # zs_obs = self.encoder_module_def.apply(
+            #     {"params": encoder_params},
+            #     observations,
+            #     method=ModelBasedEncoder.encode_state,
+            # )
             state_action = self.sale_state_action(
                 jnp.concatenate([observations], axis=-1)
             )
@@ -411,7 +411,7 @@ class GCBilinearModelBasedValue(nn.Module):
         state_action = state_action / (
             jnp.mean(jnp.abs(state_action), axis=-1, keepdims=True) + 1e-6
         )
-        # zsa = jnp.concatenate([state_action, zsa, zs], axis=-1)
+        zsa = jnp.concatenate([state_action, zsa], axis=-1)
 
         # zs_goals = self.encoder_module_def.apply(
         #     {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state

@@ -349,10 +349,10 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         shared_encoder_module_def = ModelBasedEncoder(
             action_dim=action_dim,
             pixel_obs=config.get("pixel_obs_encoder", False),
-            zs_dim=config.encoder_zs_dim,
-            za_dim=config.get("encoder_za_dim", 256),
-            zsa_dim=config.get("encoder_zsa_dim", 512),
-            hdim=config.get("encoder_hdim", 512),
+            zs_dim=config["encoder_zs_dim"],
+            za_dim=config["encoder_za_dim"],
+            zsa_dim=config["encoder_zsa_dim"],
+            hdim=config["encoder_hdim"],
             activ_fn_name=config.get("encoder_activ_fn", "elu"),
             state_feature_dim=(
                 ex_batch["stacked_observations"].shape[-1]
