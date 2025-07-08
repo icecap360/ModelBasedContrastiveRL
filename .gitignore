@@ -8,3 +8,6 @@ dist/
 .ruff_cache/
 *.npz
 datasets/
+train0.sh
+train1.sh
+train2.sh
