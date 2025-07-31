@@ -42,7 +42,7 @@ flags.DEFINE_integer('video_episodes', 1, 'Number of video episodes for each tas
 flags.DEFINE_integer('video_frame_skip', 3, 'Frame skip for videos.')
 flags.DEFINE_integer('eval_on_cpu', 0, 'Whether to evaluate on CPU.')
 flags.DEFINE_integer('frame_stack', 0, 'Number of frames to.')
-
+flags.DEFINE_float('alpha', 0.1, 'Actor\'s alpha value.')
 
 
 def main(_):
@@ -64,6 +64,7 @@ def main(_):
     # Set up environment and dataset.
     config = FLAGS.agent
     config['frame_stack'] = FLAGS.frame_stack if FLAGS.frame_stack > 0 else None # Override from CLI
+    config['alpha'] = FLAGS.alpha
     env, train_dataset, val_dataset = make_env_and_datasets(FLAGS.env_name, frame_stack=None, dataset_dir=FLAGS.dataset_dir) # frame_stack=config['frame_stack']
 
     dataset_class = {
@@ -105,6 +106,7 @@ def main(_):
     progress_bar = tqdm.tqdm(total=FLAGS.train_steps, smoothing=0.1, dynamic_ncols=True)
     i = 0
     batch_queue = []
+    warmup = 500
     while i <= FLAGS.train_steps:
         # CRL Main Loop
         # batch = train_dataset.sample(config['batch_size'])
@@ -116,8 +118,8 @@ def main(_):
         batch = train_dataset.sample(config['batch_size'])
         update_info = {}
         agent, update_info = agent.update_encoder(batch, i)
-
-        if i > 50_000:
+        
+        if i > warmup:
             agent, rl_info = agent.update(batch)
             update_info.update(rl_info)
             if i % 250 == 0:
@@ -127,6 +129,8 @@ def main(_):
 
         progress_bar.update(1)
         i += 1
+
+        
         # Update agent.
         # update_info = {}
         # if i % 500 == 0 :

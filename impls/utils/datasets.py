@@ -218,14 +218,15 @@ class GCDataset:
             idxs = self.dataset.get_random_idxs(batch_size)
 
         batch = self.dataset.sample(batch_size, idxs)
+        state_buffer = 1
         if self.config['frame_stack'] is not None:
             batch['stacked_observations'] = self.get_observations(idxs)
             batch['stacked_observations'] = np.moveaxis(batch['stacked_observations'], -1, 1)
-            batch['observations'] = self.get_observations(idxs)[..., -1]
+            batch['observations'] = self.get_observations(idxs)[..., -state_buffer]
             batch['stacked_actions'] = self.get_actions(idxs)
             batch['stacked_actions'] = np.moveaxis(batch['stacked_actions'], -1, 1)
-            batch['actions'] = self.get_actions(idxs)[..., -1]
-            batch['next_observations'] = self.get_observations(idxs + 1)[..., -1]
+            batch['actions'] = self.get_actions(idxs)[..., -state_buffer]
+            batch['next_observations'] = self.get_observations(idxs + 1)[..., -state_buffer]
             batch['stacked_next_observations'] = self.get_observations(idxs + 1)
             batch['stacked_next_observations'] = np.moveaxis(batch['stacked_next_observations'], -1, 1)
 

@@ -9,6 +9,8 @@ PRNGKey = Any
 import flax
 from optax import l2_loss
 import distrax
+import jax.numpy as jnp
+import jax.scipy as jsp
 
 default_kernel_init = flax_initializers.variance_scaling(scale=2.0, mode='fan_avg', distribution='uniform')
 default_bias_init = flax_initializers.zeros
@@ -464,15 +466,52 @@ def compute_dino_style_encoder_loss_core(
     total_encoder_loss = jnp.sum(ce_losses_per_step) * dyn_weight
     avg_ce_loss_per_step = jnp.mean(ce_losses_per_step) # Average of the mean per-step losses
 
+    # Assume final_pred_zs_continuous has shape (B, 512)
+    X = final_pred_zs_continuous
+    l2_norms = jnp.linalg.norm(X, axis=1)
+    mean_l2_norm = jnp.mean(l2_norms)
+    var_per_dim = jnp.std(X, axis=0)  # shape (512,)
+    sorted_var = jnp.sort(var_per_dim)[::-1]
+    avg_var = jnp.mean(var_per_dim)
+    avg_top_5_var = jnp.mean(sorted_var[:5])
+    avg_top_10_var = jnp.mean(sorted_var[:10])
+    avg_top_50_var = jnp.mean(sorted_var[:50])
+    avg_top_100_var = jnp.mean(sorted_var[:100])
+    avg_top_all_var = jnp.mean(sorted_var)
+    _, s, _ = jnp.linalg.svd(X, full_matrices=False)  # s: shape (min(B, 512),)
+    avg_top_5_singular_values = jnp.mean(s[:5])
+    avg_top_10_singular_values = jnp.mean(s[:9])
+    avg_top_50_singular_values = jnp.mean(s[:50])
+    avg_top_100_singular_values = jnp.mean(s[:99])
+    avg_top_all_singular_values = jnp.mean(s)
+    s_norm = s / jnp.sum(s)
+    entropy = -jnp.sum(s_norm * jnp.log(s_norm + 1e-9))
+    effective_rank = jnp.exp(entropy)
+
     return total_encoder_loss, {
         'encoder_loss_total': total_encoder_loss,
         'encoder_avg_step_ce': avg_ce_loss_per_step,
         'max_final_zs': jnp.max(final_pred_zs_continuous), # Max norm of final predicted zs
         'min_final_zs': jnp.min(final_pred_zs_continuous), # Min norm of final predicted zs
         'mean_final_zs': jnp.mean(final_pred_zs_continuous), # Mean norm of final predicted zs
+        'rank': jnp.mean(final_pred_zs_continuous), # Mean norm of final predicted zs
         'std_final_zs': jnp.std(final_pred_zs_continuous), # Std norm of final predicted zs
         'ce_losses_per_step': ce_losses_per_step, # For logging if desired
         'current_batch_avg_teacher_logits': current_batch_avg_teacher_logits,
+
+        'mean_l2_norm': mean_l2_norm,
+        'avg_variance_per_dim': avg_var,
+        'var_top_5': avg_top_5_var,
+        'var_top_9': avg_top_10_var,
+        'var_top_50': avg_top_50_var,
+        'var_top_99': avg_top_100_var,
+        'var_top_all': avg_top_all_var,
+        'sigma_top_5': avg_top_5_singular_values,
+        'sigma_top_10': avg_top_10_singular_values,
+        'sigma_top_50': avg_top_50_singular_values,
+        'sigma_top_100': avg_top_100_singular_values,
+        'sigma_top_all': avg_top_all_singular_values,
+        'effective_rank': effective_rank,
     }
 
 def binary_cross_entropy_from_logits(logits, labels):

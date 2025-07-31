@@ -80,6 +80,77 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         logits_pos = jnp.sum(logits * I) / jnp.sum(I)
         logits_neg = jnp.sum(logits * (1 - I)) / jnp.sum(1 - I)
 
+        # Assume final_pred_zs_continuous has shape (B, 512)
+        # Assume final_pred_zs_continuous has shape (B, 512)
+        X = phi
+        l2_norms = jnp.linalg.norm(X, axis=1)
+        mean_l2_norm = jnp.mean(l2_norms)
+        var_per_dim = jnp.std(X, axis=0)  # shape (512,)
+        sorted_var = jnp.sort(var_per_dim)[::-1]
+        avg_var = jnp.mean(var_per_dim)
+        avg_top_5_var = jnp.mean(sorted_var[:5])
+        avg_top_10_var = jnp.mean(sorted_var[:9])
+        avg_top_50_var = jnp.mean(sorted_var[:50])
+        avg_top_100_var = jnp.mean(sorted_var[:99])
+        avg_top_all_var = jnp.mean(sorted_var)
+        _, s, _ = jnp.linalg.svd(X, full_matrices=False)  # s: shape (min(B, 512),)
+        avg_top_5_singular_values = jnp.mean(s[:5])
+        avg_top_10_singular_values = jnp.mean(s[:10])
+        avg_top_50_singular_values = jnp.mean(s[:50])
+        avg_top_100_singular_values = jnp.mean(s[:100])
+        avg_top_all_singular_values = jnp.mean(s)
+        s_norm = s / jnp.sum(s)
+        entropy = -jnp.sum(s_norm * jnp.log(s_norm + 1e-9))
+        effective_rank = jnp.exp(entropy)
+        dict_phi = {'phi_mean_l2_norm': mean_l2_norm,
+            'phi_avg_variance_per_dim': avg_var,
+            'phi_var_top_5': avg_top_5_var,
+            'phi_var_top_10': avg_top_10_var,
+            'phi_var_top_50': avg_top_50_var,
+            'phi_var_top_100': avg_top_100_var,
+            'phi_var_top_all': avg_top_all_var,
+            'phi_sigma_top_5': avg_top_5_singular_values,
+            'phi_sigma_top_10': avg_top_10_singular_values,
+            'phi_sigma_top_50': avg_top_50_singular_values,
+            'phi_sigma_top_100': avg_top_100_singular_values,
+            'phi_sigma_top_all': avg_top_all_singular_values,
+            'phi_effective_rank': effective_rank,
+        }
+        X = psi
+        l2_norms = jnp.linalg.norm(X, axis=1)
+        mean_l2_norm = jnp.mean(l2_norms)
+        var_per_dim = jnp.std(X, axis=0)  # shape (512,)
+        sorted_var = jnp.sort(var_per_dim)[::-1]
+        avg_var = jnp.mean(var_per_dim)
+        avg_top_5_var = jnp.mean(sorted_var[:5])
+        avg_top_10_var = jnp.mean(sorted_var[:9])
+        avg_top_50_var = jnp.mean(sorted_var[:50])
+        avg_top_100_var = jnp.mean(sorted_var[:99])
+        avg_top_all_var = jnp.mean(sorted_var)
+        _, s, _ = jnp.linalg.svd(X, full_matrices=False)  # s: shape (min(B, 512),)
+        avg_top_5_singular_values = jnp.mean(s[:5])
+        avg_top_10_singular_values = jnp.mean(s[:10])
+        avg_top_50_singular_values = jnp.mean(s[:50])
+        avg_top_100_singular_values = jnp.mean(s[:100])
+        avg_top_all_singular_values = jnp.mean(s)
+        s_norm = s / jnp.sum(s)
+        entropy = -jnp.sum(s_norm * jnp.log(s_norm + 1e-9))
+        effective_rank = jnp.exp(entropy)
+        dict_psi = {'psi_mean_l2_norm': mean_l2_norm,
+            'psi_avg_variance_per_dim': avg_var,
+            'psi_var_top_5': avg_top_5_var,
+            'psi_var_top_10': avg_top_10_var,
+            'psi_var_top_50': avg_top_50_var,
+            'psi_var_top_100': avg_top_100_var,
+            'psi_var_top_all': avg_top_all_var,
+            'psi_sigma_top_5': avg_top_5_singular_values,
+            'psi_sigma_top_10': avg_top_10_singular_values,
+            'psi_sigma_top_50': avg_top_50_singular_values,
+            'psi_sigma_top_100': avg_top_100_singular_values,
+            'psi_sigma_top_all': avg_top_all_singular_values,
+            'psi_effective_rank': effective_rank,
+        }
+
         return contrastive_loss, {
             'contrastive_loss': contrastive_loss,
             'v_mean': v.mean(),
@@ -94,6 +165,8 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             'logits_pos': logits_pos,
             'logits_neg': logits_neg,
             'logits': logits.mean(),
+            **dict_phi,
+            **dict_psi,
         }
     def actor_loss(self, batch, grad_params, rng=None):
         """Compute the actor loss (AWR or DDPG+BC)."""
