@@ -3,7 +3,7 @@ from collections import defaultdict
 import jax
 import numpy as np
 from tqdm import trange
-
+import jax.numpy as jnp
 
 def supply_rng(f, rng=jax.random.PRNGKey(0)):
     """Helper function to split the random number generator key before each call to the function."""
@@ -71,13 +71,18 @@ def evaluate(
         should_render = i >= num_eval_episodes
 
         observation, info = env.reset(options=dict(task_id=task_id, render_goal=should_render))
+
+        state_buffer= config['state_buffer']
+        observation_stack = [observation for i in range(state_buffer)]
         goal = info.get('goal')
         goal_frame = info.get('goal_rendered')
         done = False
         step = 0
         render = []
         while not done:
-            action = actor_fn(observations=observation, goals=goal, temperature=eval_temperature)
+            action = actor_fn(observations=jnp.concatenate(observation_stack, axis=-1).reshape(1, -1), 
+                              # observation, 
+                              goals=goal, temperature=eval_temperature)
             action = np.array(action)
             if not config.get('discrete'):
                 if eval_gaussian is not None:
@@ -103,8 +108,11 @@ def evaluate(
                 done=done,
                 info=info,
             )
+            observation_stack.pop(0)
+            observation_stack.append(next_observation)
             add_to(traj, transition)
             observation = next_observation
+
         if i < num_eval_episodes:
             add_to(stats, flatten(info))
             trajs.append(traj)

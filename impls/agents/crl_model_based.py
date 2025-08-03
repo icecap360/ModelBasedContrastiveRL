@@ -8,7 +8,7 @@ import optax
 from utils.encoders import GCEncoder, encoder_modules
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.networks import GCActor, GCBilinearValue, GCDiscreteActor, GCDiscreteBilinearCritic
-from utils.model_based import GCBilinearModelBasedValue, GCModelBasedActor, ModelBasedEncoder, compute_encoder_loss_core, compute_dino_style_encoder_loss_core, compute_state_encoder_loss_core
+from utils.model_based import GCBilinearModelBasedValue, GCModelBasedActor, ModelBasedEncoder, compute_encoder_loss_core, compute_dino_style_encoder_loss_core, compute_state_encoder_loss_core, calc_matrix_entropy
 import flax.linen as nn
 from typing import Any, Sequence, Dict, Tuple # Added for typing
 from flax.core import freeze, unfreeze
@@ -34,7 +34,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
     momentum_schedule: callable = flax.struct.field(pytree_node=False)
     teacher_temp_schedule: callable = flax.struct.field(pytree_node=False)  
 
-    def contrastive_loss(self, batch, grad_params, module_name='critic'):
+    def contrastive_loss(self, batch, grad_params,rng, module_name='critic'):
         """Compute the contrastive value loss for the Q or V function."""
         batch_size = batch['observations'].shape[0]
 
@@ -48,7 +48,9 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 actions=actions,
                 info=True,
                 encoder_params=self.encoder_target_params, # Pass shared encoder's ONLINE parameters
+                training=True, # Set training=True for contrastive loss
                 params=grad_params,
+                rng=rng
             )     
         else:
             actions = None
@@ -80,76 +82,82 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         logits_pos = jnp.sum(logits * I) / jnp.sum(I)
         logits_neg = jnp.sum(logits * (1 - I)) / jnp.sum(1 - I)
 
+        dict_phi = {}
+        dict_psi = {}
         # Assume final_pred_zs_continuous has shape (B, 512)
         # Assume final_pred_zs_continuous has shape (B, 512)
-        X = phi
-        l2_norms = jnp.linalg.norm(X, axis=1)
-        mean_l2_norm = jnp.mean(l2_norms)
-        var_per_dim = jnp.std(X, axis=0)  # shape (512,)
-        sorted_var = jnp.sort(var_per_dim)[::-1]
-        avg_var = jnp.mean(var_per_dim)
-        avg_top_5_var = jnp.mean(sorted_var[:5])
-        avg_top_10_var = jnp.mean(sorted_var[:9])
-        avg_top_50_var = jnp.mean(sorted_var[:50])
-        avg_top_100_var = jnp.mean(sorted_var[:99])
-        avg_top_all_var = jnp.mean(sorted_var)
-        _, s, _ = jnp.linalg.svd(X, full_matrices=False)  # s: shape (min(B, 512),)
-        avg_top_5_singular_values = jnp.mean(s[:5])
-        avg_top_10_singular_values = jnp.mean(s[:10])
-        avg_top_50_singular_values = jnp.mean(s[:50])
-        avg_top_100_singular_values = jnp.mean(s[:100])
-        avg_top_all_singular_values = jnp.mean(s)
-        s_norm = s / jnp.sum(s)
-        entropy = -jnp.sum(s_norm * jnp.log(s_norm + 1e-9))
-        effective_rank = jnp.exp(entropy)
-        dict_phi = {'phi_mean_l2_norm': mean_l2_norm,
-            'phi_avg_variance_per_dim': avg_var,
-            'phi_var_top_5': avg_top_5_var,
-            'phi_var_top_10': avg_top_10_var,
-            'phi_var_top_50': avg_top_50_var,
-            'phi_var_top_100': avg_top_100_var,
-            'phi_var_top_all': avg_top_all_var,
-            'phi_sigma_top_5': avg_top_5_singular_values,
-            'phi_sigma_top_10': avg_top_10_singular_values,
-            'phi_sigma_top_50': avg_top_50_singular_values,
-            'phi_sigma_top_100': avg_top_100_singular_values,
-            'phi_sigma_top_all': avg_top_all_singular_values,
-            'phi_effective_rank': effective_rank,
-        }
-        X = psi
-        l2_norms = jnp.linalg.norm(X, axis=1)
-        mean_l2_norm = jnp.mean(l2_norms)
-        var_per_dim = jnp.std(X, axis=0)  # shape (512,)
-        sorted_var = jnp.sort(var_per_dim)[::-1]
-        avg_var = jnp.mean(var_per_dim)
-        avg_top_5_var = jnp.mean(sorted_var[:5])
-        avg_top_10_var = jnp.mean(sorted_var[:9])
-        avg_top_50_var = jnp.mean(sorted_var[:50])
-        avg_top_100_var = jnp.mean(sorted_var[:99])
-        avg_top_all_var = jnp.mean(sorted_var)
-        _, s, _ = jnp.linalg.svd(X, full_matrices=False)  # s: shape (min(B, 512),)
-        avg_top_5_singular_values = jnp.mean(s[:5])
-        avg_top_10_singular_values = jnp.mean(s[:10])
-        avg_top_50_singular_values = jnp.mean(s[:50])
-        avg_top_100_singular_values = jnp.mean(s[:100])
-        avg_top_all_singular_values = jnp.mean(s)
-        s_norm = s / jnp.sum(s)
-        entropy = -jnp.sum(s_norm * jnp.log(s_norm + 1e-9))
-        effective_rank = jnp.exp(entropy)
-        dict_psi = {'psi_mean_l2_norm': mean_l2_norm,
-            'psi_avg_variance_per_dim': avg_var,
-            'psi_var_top_5': avg_top_5_var,
-            'psi_var_top_10': avg_top_10_var,
-            'psi_var_top_50': avg_top_50_var,
-            'psi_var_top_100': avg_top_100_var,
-            'psi_var_top_all': avg_top_all_var,
-            'psi_sigma_top_5': avg_top_5_singular_values,
-            'psi_sigma_top_10': avg_top_10_singular_values,
-            'psi_sigma_top_50': avg_top_50_singular_values,
-            'psi_sigma_top_100': avg_top_100_singular_values,
-            'psi_sigma_top_all': avg_top_all_singular_values,
-            'psi_effective_rank': effective_rank,
-        }
+        # X = phi.reshape(-1, 512)
+        # l2_norms = jnp.linalg.norm(X, axis=1)
+        # mean_l2_norm = jnp.mean(l2_norms)
+        # var_per_dim = jnp.std(X, axis=0)  # shape (512,)
+        # sorted_var = jnp.sort(var_per_dim)[::-1]
+        # avg_var = jnp.mean(var_per_dim)
+        # avg_top_5_var = jnp.mean(sorted_var[:5])
+        # avg_top_10_var = jnp.mean(sorted_var[:9])
+        # avg_top_50_var = jnp.mean(sorted_var[:50])
+        # avg_top_100_var = jnp.mean(sorted_var[:99])
+        # avg_top_all_var = jnp.mean(sorted_var)
+        # matrix_entropy = calc_matrix_entropy(X)
+        # _, s, _ = jnp.linalg.svd(X, full_matrices=False)  # s: shape (min(B, 512),)
+        # avg_top_5_singular_values = jnp.mean(s[:5])
+        # avg_top_10_singular_values = jnp.mean(s[:10])
+        # avg_top_50_singular_values = jnp.mean(s[:50])
+        # avg_top_100_singular_values = jnp.mean(s[:100])
+        # avg_top_all_singular_values = jnp.mean(s)
+        # s_norm = s / jnp.sum(s)
+        # entropy = -jnp.sum(s_norm * jnp.log(s_norm + 1e-9))
+        # effective_rank = jnp.exp(entropy)
+        # dict_phi = {'phi_mean_l2_norm': mean_l2_norm,
+        #     'phi_avg_variance_per_dim': avg_var,
+        #     'phi_matrix_entropy': matrix_entropy,
+        #     'phi_var_top_5': avg_top_5_var,
+        #     'phi_var_top_10': avg_top_10_var,
+        #     'phi_var_top_50': avg_top_50_var,
+        #     'phi_var_top_100': avg_top_100_var,
+        #     'phi_var_top_all': avg_top_all_var,
+        #     'phi_sigma_top_5': avg_top_5_singular_values,
+        #     'phi_sigma_top_10': avg_top_10_singular_values,
+        #     'phi_sigma_top_50': avg_top_50_singular_values,
+        #     'phi_sigma_top_100': avg_top_100_singular_values,
+        #     'phi_sigma_top_all': avg_top_all_singular_values,
+        #     'phi_effective_rank': effective_rank,
+        # }
+        # X = psi.reshape(-1, 512)
+        # l2_norms = jnp.linalg.norm(X, axis=1)
+        # mean_l2_norm = jnp.mean(l2_norms)
+        # var_per_dim = jnp.std(X, axis=0)  # shape (512,)
+        # sorted_var = jnp.sort(var_per_dim)[::-1]
+        # avg_var = jnp.mean(var_per_dim)
+        # avg_top_5_var = jnp.mean(sorted_var[:5])
+        # avg_top_10_var = jnp.mean(sorted_var[:9])
+        # avg_top_50_var = jnp.mean(sorted_var[:50])
+        # avg_top_100_var = jnp.mean(sorted_var[:99])
+        # avg_top_all_var = jnp.mean(sorted_var)
+        # matrix_entropy = calc_matrix_entropy(X)
+        # _, s, _ = jnp.linalg.svd(X, full_matrices=False)  # s: shape (min(B, 512),)
+        # avg_top_5_singular_values = jnp.mean(s[:5])
+        # avg_top_10_singular_values = jnp.mean(s[:10])
+        # avg_top_50_singular_values = jnp.mean(s[:50])
+        # avg_top_100_singular_values = jnp.mean(s[:100])
+        # avg_top_all_singular_values = jnp.mean(s)
+        # s_norm = s / jnp.sum(s)
+        # entropy = -jnp.sum(s_norm * jnp.log(s_norm + 1e-9))
+        # effective_rank = jnp.exp(entropy)
+        # dict_psi = {'psi_mean_l2_norm': mean_l2_norm,
+        #     'psi_avg_variance_per_dim': avg_var,
+        #     'psi_matrix_entropy': matrix_entropy,
+        #     'psi_var_top_5': avg_top_5_var,
+        #     'psi_var_top_10': avg_top_10_var,
+        #     'psi_var_top_50': avg_top_50_var,
+        #     'psi_var_top_100': avg_top_100_var,
+        #     'psi_var_top_all': avg_top_all_var,
+        #     'psi_sigma_top_5': avg_top_5_singular_values,
+        #     'psi_sigma_top_10': avg_top_10_singular_values,
+        #     'psi_sigma_top_50': avg_top_50_singular_values,
+        #     'psi_sigma_top_100': avg_top_100_singular_values,
+        #     'psi_sigma_top_all': avg_top_all_singular_values,
+        #     'psi_effective_rank': effective_rank,
+        # }
 
         return contrastive_loss, {
             'contrastive_loss': contrastive_loss,
@@ -198,6 +206,12 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             else:
                 q_actions = jnp.clip(dist.sample(seed=rng), -1, 1)
 
+            state_buffer = self.config['state_buffer']
+            actions = jnp.split(batch['actions'], state_buffer, axis=-1)
+            traj_actions = actions[-1]  # All but the last action.
+            actions[-1] = q_actions  # Replace the last action with the one from the actor.
+            q_actions = jnp.concatenate(actions, axis=-1)
+
             v1, v2 = self.network.select('critic')(
                 observations=batch['observations'], 
                 goals=batch['actor_goals'], actions=q_actions,
@@ -222,7 +236,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             q = jnp.minimum(q1, q2)
             # q_loss = -q.mean() / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
             q_loss = (-q.mean()) / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
-            log_prob = dist.log_prob(batch['actions'])
+            log_prob = dist.log_prob(traj_actions)
             bc_loss = -(self.config['alpha'] * log_prob).mean()
             actor_loss = q_loss + bc_loss
 
@@ -232,7 +246,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 'q1-q2': jnp.abs(q1 - q2).mean(),
                 'bc_loss': bc_loss,
                 'bc_log_prob': log_prob.mean(),
-                'mse': jnp.mean((dist.mode() - batch['actions']) ** 2),
+                'mse': jnp.mean((dist.mode() - traj_actions) ** 2),
                 'std': jnp.mean(dist.scale_diag),
                 'q_mean': q.mean(),
                 'debug_v_mean': v.mean(),
@@ -247,12 +261,12 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             raise ValueError(f'Unsupported actor loss: {self.config["actor_loss"]}')
 
     @jax.jit
-    def total_loss(self, batch, grad_params, rng=None):
+    def total_loss(self, batch, grad_params, rng=None, step=1e5, critic_warmup_steps=10000):
         """Compute the total loss."""
         info = {}
         rng = rng if rng is not None else self.rng
 
-        critic_loss, critic_info = self.contrastive_loss(batch, grad_params, 'critic')
+        critic_loss, critic_info = self.contrastive_loss(batch, grad_params, rng, 'critic')
         for k, v in critic_info.items():
             info[f'critic/{k}'] = v
 
@@ -261,7 +275,9 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         for k, v in actor_info.items():
             info[f'actor/{k}'] = v
 
-        loss = critic_loss  + actor_loss
+        loss = critic_loss
+        loss = loss + jnp.where((step is not None) & (step > critic_warmup_steps), actor_loss, 0.0)
+
         return loss, info
 
     # @jax.jit
@@ -306,13 +322,17 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
     #     ), info
 
     @jax.jit
-    def update(self, batch: Dict): # This updates actor/critic/value (self.network)
+    def update(self, batch: Dict, step: int): # This updates actor/critic/value (self.network)
         new_rng, rng_for_total_loss = jax.random.split(self.rng)
 
+        batch_size = batch['observations'].shape[0]
+        batch['observations'] = jnp.reshape(batch['observations'], (batch_size,-1))
+        batch['next_observations'] = jnp.reshape(batch['next_observations'], (batch_size,-1))
+        batch['actions'] = jnp.reshape(batch['actions'], (batch_size,-1))
         # network_grad_params are self.network.params
         # The loss_fn will be differentiated w.r.t these.
         def loss_fn_for_update(network_params_to_grad):
-            return self.total_loss(batch, network_params_to_grad, rng=rng_for_total_loss)
+            return self.total_loss(batch, network_params_to_grad, rng=rng_for_total_loss, step=step)
 
         # `apply_loss_fn` is a helper that TrainState might have, or you implement it:
         # It computes grads and applies them.
@@ -332,16 +352,18 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
     ):
         # observations = jnp.stack(jnp.split(observations, self.config['frame_stack'], axis=-1), 0)
         # goals = jnp.stack(jnp.split(goals, self.config['frame_stack'], axis=-1), 0)
-        
+        observations = jnp.reshape(observations, (1,-1))
+    
         """Sample actions from the actor."""
         dist = self.network.select('actor')(
-            observations, goals, temperature=temperature,
+            observations, jnp.reshape(goals, (1,-1)), temperature=temperature,
             encoder_params =self.encoder_target_params, # Pass shared encoder's TARGET parameters
             )
         actions = dist.sample(seed=seed)
         if not self.config['discrete']:
             actions = jnp.clip(actions, -1, 1)
-        return actions
+
+        return actions.squeeze(0)  # Remove the batch dimension
 
     @classmethod
     def create(
@@ -360,16 +382,19 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             ex_actions: Example batch of actions. In discrete-action MDPs, this should contain the maximum action value.
             config: Configuration dictionary.
         """
-        
-        ex_goals = ex_observations
+        state_buffer = config['state_buffer']
+        ex_actions_flat = jnp.reshape(ex_actions, (1,-1))
+        ex_actions_single = ex_actions[:,:,-1]
+        ex_goals = ex_observations[:,:,-1]
+        ex_observations = jnp.reshape(ex_observations, (1,-1))
 
         rng = jax.random.PRNGKey(seed)
         rng, actor_critic_rng_main, encoder_rng_main = jax.random.split(rng, 3)
 
         if config['discrete']:
-            action_dim = ex_actions.max() + 1
+            action_dim = ex_actions_flat.max() + 1
         else:
-            action_dim = ex_actions.shape[-1]
+            action_dim = ex_actions_single.shape[-1]
 
         # Define encoders.
         encoders = dict()
@@ -386,7 +411,9 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         shared_encoder_module_def = ModelBasedEncoder(
             action_dim=action_dim, pixel_obs=config.get('pixel_obs_encoder', False),
             zs_dim=config.encoder_zs_dim, za_dim=config.get('encoder_za_dim', 256),
-            zsa_dim=config.get('encoder_zsa_dim', 512), hdim=config.get('encoder_hdim', 512),
+            zsa_dim=config.get('encoder_zsa_dim', 512), 
+            num_bins= config.get('encoder_num_bins', 65), # Number of bins for the DINO-style encoder
+            hdim=config.get('encoder_hdim', 512),
             activ_fn_name=config.get('encoder_activ_fn', 'elu'),
             state_feature_dim=ex_batch['stacked_observations'].shape[-1] if not config.get('pixel_obs_encoder', False) else 0,
             cnn_input_channels=ex_batch['stacked_observations'].shape[-1] if len(ex_batch['stacked_observations'].shape) == 4 and config.get('pixel_obs_encoder', False) else 3,
@@ -396,8 +423,9 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         dummy_state_for_enc_init = ex_batch['stacked_observations']
         dummy_action_for_enc_init = ex_batch['stacked_actions']
         initial_encoder_params = shared_encoder_module_def.init(
-            encoder_init_rng, state_example=dummy_state_for_enc_init, 
-            action_example=dummy_action_for_enc_init, method=ModelBasedEncoder._init_all_paths 
+            encoder_init_rng, state_example=ex_observations, # dummy_state_for_enc_init, 
+            action_example=ex_actions_flat, # dummy_action_for_enc_init, 
+            method=ModelBasedEncoder._init_all_paths 
         )['params']
 
         # Added learning rate decay and grdient clipping
@@ -500,7 +528,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         # Arguments for initializing each component of self.network
         # Critic's __call__ needs: obs, goals, actions, encoder_params
         network_init_args = {
-            'critic': (ex_observations, ex_goals, ex_actions, initial_encoder_params), 
+            'critic': (ex_observations, ex_goals, ex_actions_flat, initial_encoder_params), 
             'actor': (ex_observations, ex_goals, encoder_target_params), # Pass shared encoder's TARGET parameters
         }
         if config.actor_loss == 'awr':
@@ -630,6 +658,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             teacher_temp=teacher_temp,
             # not_done_mask = batch_for_encoder['stacked_masks'],
             rewards=batch_for_encoder['stacked_rewards'],
+            state_buffer=self.config['state_buffer'],
         )
         # encoder_loss = compute_state_encoder_loss_core(
         #     online_encoder_params=online_encoder_params,
@@ -662,8 +691,6 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         info['grad/max'] = final_grad_max
         info['grad/min'] = final_grad_min
         info['grad/norm'] = final_grad_norm
-
-        new_encoder_state = self.encoder.apply_gradients(grads=grads)
 
         new_info = {}
         for k,v in info.items():
@@ -743,6 +770,7 @@ def get_config():
             discount=0.99,  # Discount factor.
             actor_loss='ddpgbc',  # Actor loss type ('awr' or 'ddpgbc').
             alpha=0.1,  # Temperature in AWR or BC coefficient in DDPG+BC.
+            state_buffer=1,  # Number of frames to stack in the state buffer.
             actor_log_q=True,  # Whether to maximize log Q (True) or Q itself (False) in the actor loss.
             const_std=True,  # Whether to use constant standard deviation for the actor.
             discrete=False,  # Whether the action space is discrete.
@@ -761,13 +789,14 @@ def get_config():
             p_aug=0.0,  # Probability of applying image augmentation.
             frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
             dyn_weight = 1.0,
-            encoder_lr = 2e-4,
-            encoder_zs_dim = 512,
+            encoder_lr = 1e-4,
+            encoder_zs_dim = 256,
             pixel_obs_encoder = False,
-            encoder_za_dim = 256,
-            encoder_zsa_dim = 512,
-            encoder_hdim = 512,
-            encoder_activ_fn = 'elu',
+            encoder_za_dim = 128,
+            encoder_zsa_dim = 256,
+            encoder_hdim = 256,
+            encoder_num_bins = 64,  # Number of bins for the DINO-style encoder.
+            encoder_activ_fn = 'gelu',
             encoder_cnn_flat_size = 1568,
         )
     )   

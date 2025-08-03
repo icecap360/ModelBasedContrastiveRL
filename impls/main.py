@@ -3,6 +3,7 @@ import os
 import random
 import time
 from collections import defaultdict
+import jax.numpy as jnp
 
 import jax
 import numpy as np
@@ -31,7 +32,7 @@ flags.DEFINE_integer('restore_epoch', None, 'Restore epoch.')
 
 flags.DEFINE_integer('train_steps', 1000000, 'Number of training steps.')
 flags.DEFINE_integer('log_interval', 1000,'Logging interval')
-flags.DEFINE_integer('eval_interval', 250000, 'Evaluation interval.') # 100000
+flags.DEFINE_integer('eval_interval', 200000, 'Evaluation interval.') # 100000
 flags.DEFINE_integer('save_interval', 1000000, 'Saving interval.')
 
 flags.DEFINE_integer('eval_tasks', None, 'Number of tasks to evaluate (None for all).')
@@ -106,7 +107,7 @@ def main(_):
     progress_bar = tqdm.tqdm(total=FLAGS.train_steps, smoothing=0.1, dynamic_ncols=True)
     i = 0
     batch_queue = []
-    warmup = 500
+    warmup = 5000
     while i <= FLAGS.train_steps:
         # CRL Main Loop
         # batch = train_dataset.sample(config['batch_size'])
@@ -120,11 +121,13 @@ def main(_):
         agent, update_info = agent.update_encoder(batch, i)
         
         if i > warmup:
-            agent, rl_info = agent.update(batch)
+            agent, rl_info = agent.update(batch, step=i-warmup)
             update_info.update(rl_info)
-            if i % 250 == 0:
+            if i % 10 == 0:
+                pass
                 agent = agent.update_encoder_target_hard(i)
         else:
+            pass
             agent = agent.update_encoder_target_soft(i)
 
         progress_bar.update(1)
@@ -162,7 +165,25 @@ def main(_):
             train_metrics = {f'training/{k}': v for k, v in update_info.items()}
             if val_dataset is not None:
                 val_batch = val_dataset.sample(config['batch_size'])
+
+                batch_size = val_batch['observations'].shape[0]
+                val_batch['observations'] = jnp.reshape(val_batch['observations'], (batch_size,-1))
+                val_batch['next_observations'] = jnp.reshape(batch['next_observations'], (batch_size,-1))
+                val_batch['actions'] = jnp.reshape(val_batch['actions'], (batch_size,-1))
+
+                _, encoder_info = agent._encoder_loss_fn_for_grad(agent.encoder.params, val_batch, i)
+                encoder_info.pop('current_batch_avg_teacher_logits', None)
+                new_info = {}
+                for k,v in encoder_info.items():
+                    if k.startswith('encoder_'):
+                        new_info[k] = v
+                    else:
+                        new_info[f'encoder_{k}'] = v
+                encoder_info = new_info
+
                 _, val_info = agent.total_loss(val_batch, grad_params=None)
+                val_info.update(encoder_info)
+
                 train_metrics.update({f'validation/{k}': v for k, v in val_info.items()})
             train_metrics['time/epoch_time'] = (time.time() - last_time) / FLAGS.log_interval
             train_metrics['time/total_time'] = time.time() - first_time
