@@ -635,7 +635,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
         # return cls(rng, network=network, config=flax.core.FrozenDict(**config))
 
     # --- New method for computing encoder loss (wraps the core logic) ---
-    def _encoder_loss_fn_for_grad(self, online_encoder_params: flax.core.FrozenDict, batch_for_encoder: dict, step:int):
+    def _encoder_loss_fn_for_grad(self, online_encoder_params: flax.core.FrozenDict, batch_for_encoder: dict, step:int, key=None):
         # encoder_loss = compute_encoder_loss_core(
         #     online_encoder_params=online_encoder_params,
         #     target_encoder_params=self.encoder_target_params,
@@ -659,6 +659,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             # not_done_mask = batch_for_encoder['stacked_masks'],
             rewards=batch_for_encoder['stacked_rewards'],
             state_buffer=self.config['state_buffer'],
+            key=key
         )
         # encoder_loss = compute_state_encoder_loss_core(
         #     online_encoder_params=online_encoder_params,
@@ -675,7 +676,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
     def update_encoder(self, batch_for_encoder: dict, step:int):
         new_rng, _ = jax.random.split(self.rng)
         def loss_fn(params, batch_for_encoder):
-            return self._encoder_loss_fn_for_grad(params, batch_for_encoder, step)
+            return self._encoder_loss_fn_for_grad(params, batch_for_encoder, step, key=new_rng)
         grad_fn = jax.value_and_grad(loss_fn, argnums=0, has_aux=True)
         (loss, info), grads = grad_fn(self.encoder.params, batch_for_encoder)
 

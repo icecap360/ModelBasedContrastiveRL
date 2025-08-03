@@ -43,6 +43,29 @@ class ModelBasedMLP(nn.Module):
         y = nn.Dense(features=self.output_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)(y)
         return y
 
+def simnorm(z, V=8, tau=1.0):
+    """
+    SimNorm: Projects latent vector z into L simplex-embedded groups of size V.
+    
+    Args:
+        z: [..., L*V] latent vector (last dim must be divisible by V)
+        V: int, size of each simplex group
+        tau: float, temperature for softmax
+    Returns:
+        z_simp: [..., L*V] SimNorm-processed latent
+    """
+    last_dim = z.shape[-1]
+    assert last_dim % V == 0, "Last dimension must be divisible by V"
+    
+    # Reshape to [..., L, V]
+    z = jnp.reshape(z, (*z.shape[:-1], -1, V))
+    
+    # Apply temperature-scaled softmax along last dimension (V)
+    z = jax.nn.softmax(z / tau, axis=-1)
+    
+    # Reshape back to [..., L*V]
+    return jnp.reshape(z, (*z.shape[:-2], -1))
+
 class WeightNormDense(nn.Module):
     features: int  # out_dim
     use_bias: bool = False
@@ -98,7 +121,7 @@ class ModelBasedEncoder(nn.Module):
     def get_discrete_logits_zs(self, zs_continuous: jnp.ndarray) -> jnp.ndarray:
         """Converts continuous state embeddings (zs) to logits for discrete bins."""
         logits = self._to_logits_head_zs(zs_continuous)
-        return l2_normalize(logits)
+        return logits
 
     @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
     def get_discrete_logits_zsa(self, zsa_continuous: jnp.ndarray) -> jnp.ndarray:
@@ -321,14 +344,16 @@ class GCBilinearModelBasedValue(nn.Module):
             zs_head = self.encoder_module_def.apply(
                 {'params': encoder_params}, zs, method=ModelBasedEncoder.get_discrete_logits_zs
             )
-            zs_discrete = jax.nn.softmax(zs_head, axis=-1)
+            # zs_discrete = jax.nn.softmax(zs_head, axis=-1)
+            zs_discrete = simnorm(zs_head, V=8, tau=1.0)  # Apply SimNorm to zs_discrete
             zsa = self.encoder_module_def.apply(
                 {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.next_zs
             )
             zsa_head = self.encoder_module_def.apply(
                 {'params': encoder_params}, zsa, method=ModelBasedEncoder.get_discrete_logits_zs
             )
-            zsa_discrete = jax.nn.softmax(zsa_head, axis=-1)
+            # zsa_discrete = jax.nn.softmax(zsa_head, axis=-1)
+            zsa_discrete = simnorm(zsa_head, V=8, tau=1.0)  # Apply SimNorm to zs_discrete
             phi_inputs = jnp.concatenate([observations, actions, zs_discrete, zsa_discrete], axis=-1)
 
         phi = self.phi_mlp(phi_inputs)
@@ -450,7 +475,7 @@ def compute_state_encoder_loss_core(
         {'params': target_encoder_params}, target_zs, method=ModelBasedEncoder.get_discrete_logits_zs
     )
     centered_target_logits = target_zs - teacher_center # Broadcasting teacher_center
-    p_target_horizon = jax.nn.softmax(centered_target_logits / teacher_temp, axis=-1)
+    p_target_horizon = simnorm(centered_target_logits, tau=teacher_temp) # jax.nn.softmax(centered_target_logits / teacher_temp, axis=-1)
     p_target_horizon = jax.lax.stop_gradient(p_target_horizon) # Teacher targets are fixed
 
     pred_zs = encoder_module_def.apply(
@@ -513,7 +538,7 @@ def compute_dino_style_encoder_loss_core(
     centered_target_logits = target_logits_horizon - teacher_center # Broadcasting teacher_center
     
     # p_target_horizon will be (batch_size, horizon, num_bins)
-    p_target_horizon = jax.nn.softmax(centered_target_logits / teacher_temp, axis=-1)
+    p_target_horizon = simnorm(centered_target_logits, tau=teacher_temp) # jax.nn.softmax(centered_target_logits / teacher_temp, axis=-1)
     p_target_horizon = jax.lax.stop_gradient(p_target_horizon) # Teacher targets are fixed
 
     def loop_body(carry_pred_zs_continuous, i):
@@ -522,7 +547,7 @@ def compute_dino_style_encoder_loss_core(
         
         # Student predicts delta for next continuous state based on its z^_t and a_t
         pred_next_zs_continuous = encoder_module_def.apply(
-            {'params': online_encoder_params}, carry_pred_zs_continuous, action_step, method=ModelBasedEncoder.next_zs
+            {'params': online_encoder_params}, carry_pred_zs_continuous , action_step, method=ModelBasedEncoder.next_zs
         )        
         # Student converts its predicted z^_{t+1} to logits
         student_logits_step = encoder_module_def.apply(
@@ -539,9 +564,14 @@ def compute_dino_style_encoder_loss_core(
         
         # Cross-entropy loss for the current step
         # H(p_target, p_student) = - sum(p_target * log_softmax(student_logits / student_temp))
-        log_p_student_step = jax.nn.log_softmax(student_logits_step / student_temp, axis=-1)
-        step_ce_loss = -jnp.sum(p_target_step * log_p_student_step, axis=-1) # Sum over bins
-        mean_step_ce_loss = jnp.mean(step_ce_loss) # Mean over batch
+        # log_p_student_step = jax.nn.log_softmax(student_logits_step / student_temp, axis=-1)
+        # step_ce_loss = -jnp.sum(p_target_step * log_p_student_step, axis=-1) # Sum over bins
+        # mean_step_ce_loss = jnp.mean(step_ce_loss) # Mean over batch
+
+        student_probs = simnorm(student_logits_step, V=8, tau=student_temp)
+        log_p_student_step = jnp.log(student_probs + 1e-8)
+        step_ce_loss = -jnp.sum(p_target_step * log_p_student_step, axis=-1)  # Sum over bins
+        mean_step_ce_loss = jnp.mean(step_ce_loss)  # Mean over batch
         
         # log_p_student_step = jax.nn.log_softmax(reward_logits_step, axis=-1)
         # step_reward_loss = binary_cross_entropy_from_logits(logits=reward_logits_step, labels=rewards[:,i])
@@ -674,9 +704,10 @@ def gumbel_softmax(logits, tau=1.0, key=None, hard=False):
     else:
         y = y_soft
     return y
-def l2_normalize(x, axis=-1, eps=1e-8):
+def l2_normalize(x, axis=-1, eps=1e-6):
     norm = jnp.linalg.norm(x, axis=axis, keepdims=True)
-    return x / (norm + eps)
+    norm = jax.lax.stop_gradient(jnp.maximum(norm, eps))  # Detach norm
+    return x / norm
 # Example Usage (no changes needed here for the fix)
 if __name__ == '__main__':
     key = jax.random.PRNGKey(0)

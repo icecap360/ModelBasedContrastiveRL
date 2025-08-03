@@ -123,7 +123,7 @@ def main(_):
         if i > warmup:
             agent, rl_info = agent.update(batch, step=i-warmup)
             update_info.update(rl_info)
-            if i % 10 == 0:
+            if i % 250 == 0:
                 pass
                 agent = agent.update_encoder_target_hard(i)
         else:
@@ -171,6 +171,7 @@ def main(_):
                 val_batch['next_observations'] = jnp.reshape(batch['next_observations'], (batch_size,-1))
                 val_batch['actions'] = jnp.reshape(val_batch['actions'], (batch_size,-1))
 
+                new_rng, _ = jax.random.split(agent.rng)
                 _, encoder_info = agent._encoder_loss_fn_for_grad(agent.encoder.params, val_batch, i)
                 encoder_info.pop('current_batch_avg_teacher_logits', None)
                 new_info = {}
