@@ -107,7 +107,7 @@ def main(_):
     progress_bar = tqdm.tqdm(total=FLAGS.train_steps, smoothing=0.1, dynamic_ncols=True)
     i = 0
     batch_queue = []
-    warmup = 75_000
+    warmup = 50_000
     while i <= FLAGS.train_steps:
         # CRL Main Loop
         # batch = train_dataset.sample(config['batch_size'])
