@@ -98,7 +98,7 @@ class ModelBasedEncoder(nn.Module):
     def get_discrete_logits_zs(self, zs_continuous: jnp.ndarray) -> jnp.ndarray:
         """Converts continuous state embeddings (zs) to logits for discrete bins."""
         logits = self._to_logits_head_zs(zs_continuous)
-        return l2_normalize(logits)
+        return logits
 
     @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
     def get_discrete_logits_zsa(self, zsa_continuous: jnp.ndarray) -> jnp.ndarray:
@@ -150,7 +150,8 @@ class ModelBasedEncoder(nn.Module):
 
     def next_zs(self, zs: jnp.ndarray, action: jnp.ndarray):
         zsa = self.__call__(zs, action)
-        next_zs_delta = zsa # self._output_next_zs(zsa)
+        # next_zs_delta = zsa # self._output_next_zs(zsa)
+        next_zs_delta = self._output_next_zs(zsa)
         return next_zs_delta
 
     def _init_all_paths(self, state_example: jnp.ndarray, action_example: jnp.ndarray):

@@ -107,7 +107,7 @@ def main(_):
     progress_bar = tqdm.tqdm(total=FLAGS.train_steps, smoothing=0.1, dynamic_ncols=True)
     i = 0
     batch_queue = []
-    warmup = 5000
+    warmup = 75_000
     while i <= FLAGS.train_steps:
         # CRL Main Loop
         # batch = train_dataset.sample(config['batch_size'])
@@ -123,12 +123,11 @@ def main(_):
         if i > warmup:
             agent, rl_info = agent.update(batch, step=i-warmup)
             update_info.update(rl_info)
-            if i % 10 == 0:
+            if i % 500 == 0:
                 pass
                 agent = agent.update_encoder_target_hard(i)
         else:
-            pass
-            agent = agent.update_encoder_target_soft(i)
+            agent = agent.update_encoder_target_hard(i)
 
         progress_bar.update(1)
         i += 1

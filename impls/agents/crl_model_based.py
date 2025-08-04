@@ -435,19 +435,19 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
                 # warmup phase: from 0 → base_lr
                 optax.linear_schedule(
                     init_value=1.0e-06,
-                    end_value=3.5e-4,
+                    end_value=1e-4,
                     transition_steps=warmup_steps,
                 ),
                 # cosine phase: from base_lr → min_lr
                 optax.cosine_decay_schedule(
-                    init_value=3.5e-4,
+                    init_value=1e-4,
                     decay_steps=total_steps - warmup_steps,
-                    alpha=1.0e-06 / 3.5e-4,
+                    alpha=1.0e-06 / 1e-4,
                 ),
             ],
             boundaries=[warmup_steps],
         )
-        encoder_optimizer = optax.adamw(learning_rate=encoder_lr_schedule)
+        encoder_optimizer = optax.adamw(learning_rate=encoder_lr_schedule, weight_decay=0.1)
         encoder_train_state = TrainState.create(
             model_def=shared_encoder_module_def,
             params=initial_encoder_params, 
@@ -795,7 +795,7 @@ def get_config():
             encoder_za_dim = 128,
             encoder_zsa_dim = 256,
             encoder_hdim = 256,
-            encoder_num_bins = 64,  # Number of bins for the DINO-style encoder.
+            encoder_num_bins = 256,  # Number of bins for the DINO-style encoder.
             encoder_activ_fn = 'gelu',
             encoder_cnn_flat_size = 1568,
         )
