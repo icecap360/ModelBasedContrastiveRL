@@ -790,11 +790,11 @@ def get_config():
             frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
             dyn_weight = 1.0,
             encoder_lr = 1e-4,
-            encoder_zs_dim = 256,
+            encoder_zs_dim = 512,
             pixel_obs_encoder = False,
-            encoder_za_dim = 128,
-            encoder_zsa_dim = 256,
-            encoder_hdim = 256,
+            encoder_za_dim = 256,
+            encoder_zsa_dim = 512,
+            encoder_hdim = 512,
             encoder_num_bins = 256,  # Number of bins for the DINO-style encoder.
             encoder_activ_fn = 'gelu',
             encoder_cnn_flat_size = 1568,
