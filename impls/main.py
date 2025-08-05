@@ -110,24 +110,24 @@ def main(_):
     warmup = 50_000
     while i <= FLAGS.train_steps:
         # CRL Main Loop
-        # batch = train_dataset.sample(config['batch_size'])
-        # agent, update_info = agent.update(batch)
-        # progress_bar.update(1)
-        # i += 1
+        batch = train_dataset.sample(config['batch_size'])
+        agent, update_info = agent.update(batch)
+        progress_bar.update(1)
+        i += 1
 
         # Update agent.
-        batch = train_dataset.sample(config['batch_size'])
-        update_info = {}
-        agent, update_info = agent.update_encoder(batch, i)
+        # batch = train_dataset.sample(config['batch_size'])
+        # update_info = {}
+        # agent, update_info = agent.update_encoder(batch, i)
         
-        if i > warmup:
-            agent, rl_info = agent.update(batch, step=i-warmup)
-            update_info.update(rl_info)
-            if i % 500 == 0:
-                pass
-                agent = agent.update_encoder_target_hard(i)
-        else:
-            agent = agent.update_encoder_target_hard(i)
+        # if i > warmup:
+        #     agent, rl_info = agent.update(batch, step=i-warmup)
+        #     update_info.update(rl_info)
+        #     if i % 500 == 0:
+        #         pass
+        #         agent = agent.update_encoder_target_hard(i)
+        # else:
+        #     agent = agent.update_encoder_target_hard(i)
 
         progress_bar.update(1)
         i += 1
@@ -170,18 +170,18 @@ def main(_):
                 val_batch['next_observations'] = jnp.reshape(batch['next_observations'], (batch_size,-1))
                 val_batch['actions'] = jnp.reshape(val_batch['actions'], (batch_size,-1))
 
-                _, encoder_info = agent._encoder_loss_fn_for_grad(agent.encoder.params, val_batch, i)
-                encoder_info.pop('current_batch_avg_teacher_logits', None)
-                new_info = {}
-                for k,v in encoder_info.items():
-                    if k.startswith('encoder_'):
-                        new_info[k] = v
-                    else:
-                        new_info[f'encoder_{k}'] = v
-                encoder_info = new_info
+                # _, encoder_info = agent._encoder_loss_fn_for_grad(agent.encoder.params, val_batch, i)
+                # encoder_info.pop('current_batch_avg_teacher_logits', None)
+                # new_info = {}
+                # for k,v in encoder_info.items():
+                #     if k.startswith('encoder_'):
+                #         new_info[k] = v
+                #     else:
+                #         new_info[f'encoder_{k}'] = v
+                # encoder_info = new_info
 
                 _, val_info = agent.total_loss(val_batch, grad_params=None)
-                val_info.update(encoder_info)
+                # val_info.update(encoder_info)
 
                 train_metrics.update({f'validation/{k}': v for k, v in val_info.items()})
             train_metrics['time/epoch_time'] = (time.time() - last_time) / FLAGS.log_interval
