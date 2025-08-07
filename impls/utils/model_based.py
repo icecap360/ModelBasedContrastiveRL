@@ -413,9 +413,20 @@ def compute_encoder_loss_core(
     online_encoder_params: flax.core.FrozenDict, target_encoder_params: flax.core.FrozenDict,
     encoder_module_def: ModelBasedEncoder, states: jnp.ndarray, actions: jnp.ndarray,
     next_states: jnp.ndarray, not_done_mask: jnp.ndarray, enc_horizon: int, dyn_weight: float,
+    state_buffer=1
 ):
     batch_size = states.shape[0]; zs_dim = encoder_module_def.zs_dim; state_shape = states.shape[2:]
+    num_groups = enc_horizon - state_buffer + 1
+    # Stack sliding windows and flatten last two dims
+    states_grouped = jnp.stack([states[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
+    states = states_grouped.reshape(1024, num_groups, -1)  # shape: (1024, 9, 116)
+    next_states_grouped = jnp.stack([next_states[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
+    next_states = next_states_grouped.reshape(1024, num_groups, -1)  # shape: (1024, 9, 116)
+    actions_grouped = jnp.stack([actions[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
+    actions = actions_grouped.reshape(1024, num_groups, -1) 
     # flat_next_states = next_states.reshape(-1, *state_shape) 
+
+
     target_zs_horizon = encoder_module_def.apply(
         {'params': target_encoder_params}, next_states, method=ModelBasedEncoder.encode_state
     )
@@ -424,7 +435,8 @@ def compute_encoder_loss_core(
         {'params': online_encoder_params}, initial_states_for_online_encoder, method=ModelBasedEncoder.encode_state
     )
     def loop_body(carry_pred_zs, i):
-        action_step = actions[:, i]; target_zs_step = target_zs_horizon[:, i]
+        action_step = actions[:, i]; 
+        target_zs_step = target_zs_horizon[:, i, :]
         next_predicted_latent_state = encoder_module_def.apply(
             {'params': online_encoder_params}, carry_pred_zs, action_step, method=ModelBasedEncoder.next_zs 
         )

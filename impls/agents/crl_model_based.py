@@ -644,6 +644,7 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
             next_states=batch_for_encoder['stacked_next_observations'], not_done_mask=batch_for_encoder['masks'],
             enc_horizon=self.config['frame_stack'], 
             dyn_weight=self.config['dyn_weight'],
+            state_buffer=self.config['state_buffer'],
         )
         # teacher_temp = self.teacher_temp_schedule(step)
         # encoder_loss = compute_dino_style_encoder_loss_core(
