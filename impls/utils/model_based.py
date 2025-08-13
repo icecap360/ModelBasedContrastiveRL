@@ -97,6 +97,7 @@ class ModelBasedEncoder(nn.Module):
     @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
     def get_discrete_logits_zs(self, zs_continuous: jnp.ndarray) -> jnp.ndarray:
         """Converts continuous state embeddings (zs) to logits for discrete bins."""
+        zs_continuous = LnActiv(activation=self.activ_fn, name="get_zsa_continuous_ln_activ")(zs_continuous)
         logits = self._to_logits_head_zs(zs_continuous)
         return logits
 
@@ -430,6 +431,9 @@ def compute_encoder_loss_core(
     target_zs_horizon = encoder_module_def.apply(
         {'params': target_encoder_params}, next_states, method=ModelBasedEncoder.encode_state
     )
+    target_zs_horizon = encoder_module_def.apply(
+        {'params': target_encoder_params}, target_zs_horizon, method=ModelBasedEncoder.get_discrete_logits_zs
+    )
     initial_states_for_online_encoder = states[:, 0] 
     current_pred_zs = encoder_module_def.apply(
         {'params': online_encoder_params}, initial_states_for_online_encoder, method=ModelBasedEncoder.encode_state
@@ -440,7 +444,10 @@ def compute_encoder_loss_core(
         next_predicted_latent_state = encoder_module_def.apply(
             {'params': online_encoder_params}, carry_pred_zs, action_step, method=ModelBasedEncoder.next_zs 
         )
-        step_dyn_loss = jnp.mean(jnp.square(next_predicted_latent_state - target_zs_step))
+        next_predicted_state = encoder_module_def.apply(
+            {'params': online_encoder_params}, next_predicted_latent_state, method=ModelBasedEncoder.get_discrete_logits_zs
+        )
+        step_dyn_loss = jnp.mean(jnp.square(next_predicted_state - target_zs_step))
         return next_predicted_latent_state, step_dyn_loss
     final_pred_zs, dyn_losses_per_step = jax.lax.scan(loop_body, current_pred_zs, jnp.arange(enc_horizon))
     total_encoder_loss = jnp.sum(dyn_losses_per_step) * dyn_weight 
