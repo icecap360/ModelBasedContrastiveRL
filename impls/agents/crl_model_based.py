@@ -636,31 +636,31 @@ class CRLModelBasedAgent(flax.struct.PyTreeNode):
 
     # --- New method for computing encoder loss (wraps the core logic) ---
     def _encoder_loss_fn_for_grad(self, online_encoder_params: flax.core.FrozenDict, batch_for_encoder: dict, step:int):
-        encoder_loss = compute_encoder_loss_core(
-            online_encoder_params=online_encoder_params,
-            target_encoder_params=self.encoder_target_params,
-            encoder_module_def=self.encoder_module_def,
-            states=batch_for_encoder['stacked_observations'], actions=batch_for_encoder['stacked_actions'],
-            next_states=batch_for_encoder['stacked_next_observations'], not_done_mask=batch_for_encoder['masks'],
-            enc_horizon=self.config['frame_stack'], 
-            dyn_weight=self.config['dyn_weight'],
-            state_buffer=self.config['state_buffer'],
-        )
-        # teacher_temp = self.teacher_temp_schedule(step)
-        # encoder_loss = compute_dino_style_encoder_loss_core(
+        # encoder_loss = compute_encoder_loss_core(
         #     online_encoder_params=online_encoder_params,
         #     target_encoder_params=self.encoder_target_params,
         #     encoder_module_def=self.encoder_module_def,
-        #     states=batch_for_encoder['stacked_observations'], 
-        #     next_states=batch_for_encoder['stacked_next_observations'],
-        #     teacher_center=self.teacher_center,actions=batch_for_encoder['stacked_actions'],
+        #     states=batch_for_encoder['stacked_observations'], actions=batch_for_encoder['stacked_actions'],
+        #     next_states=batch_for_encoder['stacked_next_observations'], not_done_mask=batch_for_encoder['masks'],
         #     enc_horizon=self.config['frame_stack'], 
         #     dyn_weight=self.config['dyn_weight'],
-        #     teacher_temp=teacher_temp,
-        #     # not_done_mask = batch_for_encoder['stacked_masks'],
-        #     rewards=batch_for_encoder['stacked_rewards'],
         #     state_buffer=self.config['state_buffer'],
         # )
+        teacher_temp = self.teacher_temp_schedule(step)
+        encoder_loss = compute_dino_style_encoder_loss_core(
+            online_encoder_params=online_encoder_params,
+            target_encoder_params=self.encoder_target_params,
+            encoder_module_def=self.encoder_module_def,
+            states=batch_for_encoder['stacked_observations'], 
+            next_states=batch_for_encoder['stacked_next_observations'],
+            teacher_center=self.teacher_center,actions=batch_for_encoder['stacked_actions'],
+            enc_horizon=self.config['frame_stack'], 
+            dyn_weight=self.config['dyn_weight'],
+            teacher_temp=teacher_temp,
+            # not_done_mask = batch_for_encoder['stacked_masks'],
+            rewards=batch_for_encoder['stacked_rewards'],
+            state_buffer=self.config['state_buffer'],
+        )
         # encoder_loss = compute_state_encoder_loss_core(
         #     online_encoder_params=online_encoder_params,
         #     target_encoder_params=self.encoder_target_params,
