@@ -1,20 +1,27 @@
+from functools import partial
+from typing import Any, Callable, Optional, Sequence
+
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import flax.linen as nn
 from flax.linen import initializers as flax_initializers
-from typing import Callable, Sequence, Any, Optional
-from functools import partial
-from .networks import MLP, ensemblize, default_init
+
+from .networks import MLP, default_init, ensemblize
+
 PRNGKey = Any
-import flax
-from optax import l2_loss
-import distrax
-import jax.numpy as jnp
-import jax.scipy as jsp
 import random
 
-default_kernel_init = flax_initializers.variance_scaling(scale=2.0, mode='fan_avg', distribution='uniform')
+import distrax
+import flax
+import jax.numpy as jnp
+import jax.scipy as jsp
+from optax import l2_loss
+
+default_kernel_init = flax_initializers.variance_scaling(
+    scale=2.0, mode="fan_avg", distribution="uniform"
+)
 default_bias_init = flax_initializers.zeros
+
 
 class LnActiv(nn.Module):
     activation: Callable = nn.gelu
@@ -28,20 +35,38 @@ class LnActiv(nn.Module):
             return x
         return self.activation(x)
 
+
 class ModelBasedMLP(nn.Module):
     output_dim: int
     hdim: int
-    activ_fn_name: str = 'gelu'
+    activ_fn_name: str = "gelu"
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         activ_fn = getattr(nn, self.activ_fn_name)
-        y = nn.Dense(features=self.hdim, kernel_init=default_kernel_init, bias_init=default_bias_init)(x)
-        y = LnActiv(activation=activ_fn)(y) # This is fine as BaseMLP.__call__ is @nn.compact
-        y = nn.Dense(features=self.hdim, kernel_init=default_kernel_init, bias_init=default_bias_init)(y)
-        y = LnActiv(activation=activ_fn)(y) # This is fine as BaseMLP.__call__ is @nn.compact
-        y = nn.Dense(features=self.output_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)(y)
+        y = nn.Dense(
+            features=self.hdim,
+            kernel_init=default_kernel_init,
+            bias_init=default_bias_init,
+        )(x)
+        y = LnActiv(activation=activ_fn)(
+            y
+        )  # This is fine as BaseMLP.__call__ is @nn.compact
+        y = nn.Dense(
+            features=self.hdim,
+            kernel_init=default_kernel_init,
+            bias_init=default_bias_init,
+        )(y)
+        y = LnActiv(activation=activ_fn)(
+            y
+        )  # This is fine as BaseMLP.__call__ is @nn.compact
+        y = nn.Dense(
+            features=self.output_dim,
+            kernel_init=default_kernel_init,
+            bias_init=default_bias_init,
+        )(y)
         return y
+
 
 class WeightNormDense(nn.Module):
     features: int  # out_dim
@@ -50,7 +75,9 @@ class WeightNormDense(nn.Module):
     @nn.compact
     def __call__(self, x):
         # V: unnormalized weight
-        V = self.param("V", nn.initializers.lecun_normal(), (x.shape[-1], self.features))
+        V = self.param(
+            "V", nn.initializers.lecun_normal(), (x.shape[-1], self.features)
+        )
         g = self.param("g", nn.initializers.ones, (self.features,))  # initialized to 1
         V_norm = jnp.linalg.norm(V, axis=0, keepdims=False) + 1e-6
         W = V * (g / V_norm)  # apply weight normalization
@@ -60,7 +87,8 @@ class WeightNormDense(nn.Module):
             bias = self.param("bias", nn.initializers.zeros, (self.features,))
             y += bias
         return y
-    
+
+
 class ModelBasedEncoder(nn.Module):
     action_dim: int
     pixel_obs: bool
@@ -69,50 +97,111 @@ class ModelBasedEncoder(nn.Module):
     za_dim: int = 256
     zsa_dim: int = 512
     hdim: int = 512
-    activ_fn_name: str = 'gelu'
+    activ_fn_name: str = "gelu"
     state_feature_dim: int = 0
     cnn_input_channels: int = 3
     cnn_flat_size: int = 1568
+
     def setup(self):
         self.activ_fn = getattr(nn, self.activ_fn_name)
-        
+
         if self.pixel_obs:
-            self._zs_cnn1 = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2), kernel_init=default_kernel_init, bias_init=default_bias_init)
-            self._zs_cnn2 = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2), kernel_init=default_kernel_init, bias_init=default_bias_init)
-            self._zs_cnn3 = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2), kernel_init=default_kernel_init, bias_init=default_bias_init)
-            self._zs_cnn4 = nn.Conv(features=32, kernel_size=(3, 3), strides=(1, 1), kernel_init=default_kernel_init, bias_init=default_bias_init)
-            self._zs_lin = nn.Dense(features=self.zs_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)
+            self._zs_cnn1 = nn.Conv(
+                features=32,
+                kernel_size=(3, 3),
+                strides=(2, 2),
+                kernel_init=default_kernel_init,
+                bias_init=default_bias_init,
+            )
+            self._zs_cnn2 = nn.Conv(
+                features=32,
+                kernel_size=(3, 3),
+                strides=(2, 2),
+                kernel_init=default_kernel_init,
+                bias_init=default_bias_init,
+            )
+            self._zs_cnn3 = nn.Conv(
+                features=32,
+                kernel_size=(3, 3),
+                strides=(2, 2),
+                kernel_init=default_kernel_init,
+                bias_init=default_bias_init,
+            )
+            self._zs_cnn4 = nn.Conv(
+                features=32,
+                kernel_size=(3, 3),
+                strides=(1, 1),
+                kernel_init=default_kernel_init,
+                bias_init=default_bias_init,
+            )
+            self._zs_lin = nn.Dense(
+                features=self.zs_dim,
+                kernel_init=default_kernel_init,
+                bias_init=default_bias_init,
+            )
             self.zs_encoder_fn = self._cnn_zs
         else:
-            self._zs_mlp = ModelBasedMLP(output_dim=self.zs_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name) # ModelBasedMLP((self.zs_dim, self.zs_dim, self.zs_dim), activate_final=False, layer_norm=True)
+            self._zs_mlp = ModelBasedMLP(
+                output_dim=self.zs_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name
+            )  # ModelBasedMLP((self.zs_dim, self.zs_dim, self.zs_dim), activate_final=False, layer_norm=True)
             self.zs_encoder_fn = self._mlp_zs
 
-        self._za_lin = nn.Dense(features=self.za_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)
-        self._zsa_mlp = ModelBasedMLP(output_dim=self.zsa_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name)
-        self._output_next_zs = nn.Dense(features=self.zs_dim, kernel_init=default_kernel_init, bias_init=default_bias_init)
-        self._to_logits_head_zs = nn.Dense(features=self.num_bins, kernel_init=default_kernel_init, bias_init=default_bias_init, name="to_logits_head")
-        self._to_logits_head_zsa = nn.Dense(features=self.num_bins, kernel_init=default_kernel_init, bias_init=default_bias_init, name="to_logits_head_zsa")
-        self._rewards = nn.Dense(features=2, kernel_init=default_kernel_init, bias_init=default_bias_init)
+        self._za_lin = nn.Dense(
+            features=self.za_dim,
+            kernel_init=default_kernel_init,
+            bias_init=default_bias_init,
+        )
+        self._zsa_mlp = ModelBasedMLP(
+            output_dim=self.zsa_dim, hdim=self.hdim, activ_fn_name=self.activ_fn_name
+        )
+        self._output_next_zs = nn.Dense(
+            features=self.zs_dim,
+            kernel_init=default_kernel_init,
+            bias_init=default_bias_init,
+        )
+        self._to_logits_head_zs = nn.Dense(
+            features=self.num_bins,
+            kernel_init=default_kernel_init,
+            bias_init=default_bias_init,
+            name="to_logits_head",
+        )
+        self._to_logits_head_zsa = nn.Dense(
+            features=self.num_bins,
+            kernel_init=default_kernel_init,
+            bias_init=default_bias_init,
+            name="to_logits_head_zsa",
+        )
+        self._rewards = nn.Dense(
+            features=2, kernel_init=default_kernel_init, bias_init=default_bias_init
+        )
 
-    @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
+    @nn.compact  # Added @nn.compact as it uses self._to_logits_head which is a submodule
     def get_discrete_logits_zs(self, zs_continuous: jnp.ndarray) -> jnp.ndarray:
         """Converts continuous state embeddings (zs) to logits for discrete bins."""
-        zs_continuous = LnActiv(activation=self.activ_fn, name="get_zsa_continuous_ln_activ")(zs_continuous)
+        zs_continuous = LnActiv(
+            activation=self.activ_fn, name="get_zsa_continuous_ln_activ"
+        )(zs_continuous)
         logits = self._to_logits_head_zs(zs_continuous)
         return logits
 
-    @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
+    @nn.compact  # Added @nn.compact as it uses self._to_logits_head which is a submodule
     def get_discrete_logits_zsa(self, zsa_continuous: jnp.ndarray) -> jnp.ndarray:
         """Converts continuous state embeddings (zs) to logits for discrete bins."""
-        zsa_continuous = LnActiv(activation=self.activ_fn, name="get_zsa_continuous_ln_activ")(zsa_continuous)  # Ensure activation is applied
+        zsa_continuous = LnActiv(
+            activation=self.activ_fn, name="get_zsa_continuous_ln_activ"
+        )(
+            zsa_continuous
+        )  # Ensure activation is applied
         logits = self._to_logits_head_zsa(zsa_continuous)
         last_layer = WeightNormDense(self.zsa_dim, use_bias=False)
         return last_layer(logits)
 
-    @nn.compact # Added @nn.compact as it uses self._to_logits_head which is a submodule
+    @nn.compact  # Added @nn.compact as it uses self._to_logits_head which is a submodule
     def get_rewards(self, zs: jnp.ndarray) -> jnp.ndarray:
         """Converts continuous state embeddings (zs) to logits for discrete bins."""
-        zs = LnActiv(activation=self.activ_fn, name="get_reward_ln_activ")(zs)  # Ensure activation is applied
+        zs = LnActiv(activation=self.activ_fn, name="get_reward_ln_activ")(
+            zs
+        )  # Ensure activation is applied
         logits = self._rewards(zs)
         return logits
 
@@ -125,16 +214,22 @@ class ModelBasedEncoder(nn.Module):
         zs = self.activ_fn(self._zs_cnn4(zs))
         zs = zs.reshape((zs.shape[0], -1))
         if zs.shape[1] != self.cnn_flat_size and self.pixel_obs:
-            raise ValueError(f"CNN output flattened size {zs.shape[1]} does not match expected cnn_flat_size {self.cnn_flat_size}")
+            raise ValueError(
+                f"CNN output flattened size {zs.shape[1]} does not match expected cnn_flat_size {self.cnn_flat_size}"
+            )
         zs = self._zs_lin(zs)
         # This LnActiv is now correctly defined within a @compact method
         return LnActiv(activation=self.activ_fn, name="final_zs_ln_activ_cnn")(zs)
 
     @nn.compact  # <--- ADDED @nn.compact
     def _mlp_zs(self, state: jnp.ndarray) -> jnp.ndarray:
-        zs_encoded = self._zs_mlp(state) # self._zs_mlp is an instance of BaseMLP from setup()
+        zs_encoded = self._zs_mlp(
+            state
+        )  # self._zs_mlp is an instance of BaseMLP from setup()
         # This LnActiv is now correctly defined within a @compact method
-        return LnActiv(activation=self.activ_fn, name="final_zs_ln_activ_mlp")(zs_encoded)
+        return LnActiv(activation=self.activ_fn, name="final_zs_ln_activ_mlp")(
+            zs_encoded
+        )
 
     def encode_state(self, state: jnp.ndarray) -> jnp.ndarray:
         zs = self.zs_encoder_fn(state)
@@ -163,10 +258,11 @@ class ModelBasedEncoder(nn.Module):
         # self.get_discrete_logits_zsa(zs_example)
         return zs_example
 
+
 class GCModelBasedActor(nn.Module):
     """Goal-conditioned actor.
 
-    Attributes: 
+    Attributes:
         hidden_dims: Hidden layer dimensions.
         action_dim: Action dimension.
         log_std_min: Minimum value of log standard deviation.
@@ -180,7 +276,7 @@ class GCModelBasedActor(nn.Module):
 
     hidden_dims: Sequence[int]
     action_dim: int
-    encoder_module_def: ModelBasedEncoder # The static definition of the shared encoder
+    encoder_module_def: ModelBasedEncoder  # The static definition of the shared encoder
     log_std_min: Optional[float] = -5
     log_std_max: Optional[float] = 2
     tanh_squash: bool = False
@@ -191,20 +287,30 @@ class GCModelBasedActor(nn.Module):
 
     def setup(self):
         self.actor_net = MLP(self.hidden_dims, activate_final=True)
-        self.mean_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
-        self.sale_state_action = nn.Dense(512, kernel_init=default_init(self.final_fc_init_scale))
-        self.norm = LnActiv(activation=nn.gelu) # This is fine as BaseMLP.__call__ is @nn.compact
+        self.mean_net = nn.Dense(
+            self.action_dim, kernel_init=default_init(self.final_fc_init_scale)
+        )
+        self.sale_state_action = nn.Dense(
+            512, kernel_init=default_init(self.final_fc_init_scale)
+        )
+        self.norm = LnActiv(
+            activation=nn.gelu
+        )  # This is fine as BaseMLP.__call__ is @nn.compact
         if self.state_dependent_std:
-            self.log_std_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
+            self.log_std_net = nn.Dense(
+                self.action_dim, kernel_init=default_init(self.final_fc_init_scale)
+            )
         else:
             if not self.const_std:
-                self.log_stds = self.param('log_stds', nn.initializers.zeros, (self.action_dim,))
+                self.log_stds = self.param(
+                    "log_stds", nn.initializers.zeros, (self.action_dim,)
+                )
 
     def __call__(
         self,
         observations,
         goals=None,
-        encoder_params: flax.core.FrozenDict= None, # Parameters of the shared encoder
+        encoder_params: flax.core.FrozenDict = None,  # Parameters of the shared encoder
         goal_encoded=False,
         temperature=1.0,
     ):
@@ -221,11 +327,13 @@ class GCModelBasedActor(nn.Module):
         else:
             # --- Use the shared ModelBasedEncoder ---
             zs_obs = self.encoder_module_def.apply(
-                {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
-            )         
-            # state_action = self.sale_state_action(jnp.concatenate([observations], axis=-1)) 
+                {"params": encoder_params},
+                observations,
+                method=ModelBasedEncoder.encode_state,
+            )
+            # state_action = self.sale_state_action(jnp.concatenate([observations], axis=-1))
             # state_action  = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
-            inputs = [ observations]
+            inputs = [observations]
             if goals is not None:
                 # zs_goals = self.encoder_module_def.apply(
                 #         {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
@@ -247,9 +355,13 @@ class GCModelBasedActor(nn.Module):
 
         log_stds = jnp.clip(log_stds, self.log_std_min, self.log_std_max)
 
-        distribution = distrax.MultivariateNormalDiag(loc=means, scale_diag=jnp.exp(log_stds) * temperature)
+        distribution = distrax.MultivariateNormalDiag(
+            loc=means, scale_diag=jnp.exp(log_stds) * temperature
+        )
         if self.tanh_squash:
-            distribution = TransformedWithMode(distribution, distrax.Block(distrax.Tanh(), ndims=1))
+            distribution = TransformedWithMode(
+                distribution, distrax.Block(distrax.Tanh(), ndims=1)
+            )
 
         return distribution
 
@@ -273,42 +385,57 @@ def maybe_mutate(zsa, zs, key, training: bool, p: float = 0.25):
 
     # Zero out selected rows
     zsa = jnp.where(mask, 0.0, zsa)
-    zs  = jnp.where(mask, 0.0, zs)
+    zs = jnp.where(mask, 0.0, zs)
 
     return zsa, zs, key
+
 
 class GCBilinearModelBasedValue(nn.Module):
     hidden_dims: Sequence[int]
     latent_dim: int
-    encoder_module_def: ModelBasedEncoder # The static definition of the shared encoder
+    encoder_module_def: ModelBasedEncoder  # The static definition of the shared encoder
     layer_norm: bool = True
     ensemble: bool = True
     value_exp: bool = False
-    state_encoder: nn.Module = None # For other, non-shared state encodings (e.g., visual pre-encoder)
+    state_encoder: nn.Module = (
+        None  # For other, non-shared state encodings (e.g., visual pre-encoder)
+    )
     goal_encoder: nn.Module = None  # For other, non-shared goal encodings
-    activ_fn_name: str = 'gelu'
+    activ_fn_name: str = "gelu"
 
     def setup(self):
         mlp_module = MLP
         output_dim_phi_psi = self.latent_dim
         mlp_module = ensemblize(mlp_module, 2)
         self.sale_state_action = nn.Dense(512, kernel_init=default_init(1e-2))
-        self.phi_mlp = mlp_module((*self.hidden_dims, output_dim_phi_psi), activate_final=False, layer_norm=self.layer_norm)
-        self.psi_mlp = mlp_module((*self.hidden_dims, output_dim_phi_psi), activate_final=False, layer_norm=self.layer_norm)
+        self.phi_mlp = mlp_module(
+            (*self.hidden_dims, output_dim_phi_psi),
+            activate_final=False,
+            layer_norm=self.layer_norm,
+        )
+        self.psi_mlp = mlp_module(
+            (*self.hidden_dims, output_dim_phi_psi),
+            activate_final=False,
+            layer_norm=self.layer_norm,
+        )
         activ_fn = getattr(nn, self.activ_fn_name)
-        self.norm = LnActiv(activation=activ_fn) # This is fine as BaseMLP.__call__ is @nn.compact
-        self.norm_goals = LnActiv(activation=activ_fn)# This is fine as BaseMLP.__call__ is @nn.compact
+        self.norm = LnActiv(
+            activation=activ_fn
+        )  # This is fine as BaseMLP.__call__ is @nn.compact
+        self.norm_goals = LnActiv(
+            activation=activ_fn
+        )  # This is fine as BaseMLP.__call__ is @nn.compact
 
-
-    def __call__(self, 
-                 observations: jnp.ndarray, 
-                 goals: jnp.ndarray, 
-                 actions: jnp.ndarray, 
-                 encoder_params: flax.core.FrozenDict, # Parameters of the shared encoder
-                 rng = None,
-                 info: bool = False,
-                 training=False,
-                 ):
+    def __call__(
+        self,
+        observations: jnp.ndarray,
+        goals: jnp.ndarray,
+        actions: jnp.ndarray,
+        encoder_params: flax.core.FrozenDict,  # Parameters of the shared encoder
+        rng=None,
+        info: bool = False,
+        training=False,
+    ):
         if self.state_encoder is not None:
             observations = self.state_encoder(observations)
         if self.goal_encoder is not None:
@@ -317,28 +444,40 @@ class GCBilinearModelBasedValue(nn.Module):
         if actions is None:
             phi_inputs = observations
         else:
+
             zs = self.encoder_module_def.apply(
-                {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
+                {"params": encoder_params},
+                observations,
+                method=ModelBasedEncoder.encode_state,
             )
-            # zs_head = self.encoder_module_def.apply(
-            #     {'params': encoder_params}, zs, method=ModelBasedEncoder.get_discrete_logits_zs
-            # )
-            # zs_discrete = jax.nn.softmax(zs_head, axis=-1)
+            zs_head = self.encoder_module_def.apply(
+                {"params": encoder_params},
+                zs,
+                method=ModelBasedEncoder.get_discrete_logits_zs,
+            )
+            zs_discrete = jax.nn.softmax(zs_head, axis=-1)
             zsa = self.encoder_module_def.apply(
-                {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.next_zs
+                {"params": encoder_params},
+                zs,
+                actions,
+                method=ModelBasedEncoder.next_zs,
             )
-            # zsa_head = self.encoder_module_def.apply(
-            #     {'params': encoder_params}, zsa, method=ModelBasedEncoder.get_discrete_logits_zs
-            # )
-            # zsa_discrete = jax.nn.softmax(zsa_head, axis=-1)
-            phi_inputs = jnp.concatenate([observations, actions, zs, zsa], axis=-1)
+            zsa_head = self.encoder_module_def.apply(
+                {"params": encoder_params},
+                zsa,
+                method=ModelBasedEncoder.get_discrete_logits_zs,
+            )
+            zsa_discrete = jax.nn.softmax(zsa_head, axis=-1)
+            phi_inputs = jnp.concatenate(
+                [observations, actions, zs_discrete, zsa_discrete], axis=-1
+            )
 
         phi = self.phi_mlp(phi_inputs)
 
         # zs_goals = self.encoder_module_def.apply(
         #     {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
         # )
-        psi_inputs = jnp.concatenate([goals], axis=-1) # zs_goals
+        psi_inputs = jnp.concatenate([goals], axis=-1)  # zs_goals
         psi = self.psi_mlp(psi_inputs)
 
         v = (phi * psi / jnp.sqrt(self.latent_dim)).sum(axis=-1)
@@ -350,49 +489,57 @@ class GCBilinearModelBasedValue(nn.Module):
             return v, phi, psi
         else:
             return v
-        if self.state_encoder is not None: # Apply pre-encoder for observations if any
+        if self.state_encoder is not None:  # Apply pre-encoder for observations if any
             observations = self.state_encoder(observations)
-        if self.goal_encoder is not None: # Apply pre-encoder for goals if any
+        if self.goal_encoder is not None:  # Apply pre-encoder for goals if any
             goals = self.goal_encoder(goals)
 
         # --- Use the shared ModelBasedEncoder ---
         zs = self.encoder_module_def.apply(
-            {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
+            {"params": encoder_params},
+            observations,
+            method=ModelBasedEncoder.encode_state,
         )
         zsa = self.encoder_module_def.apply(
-            {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
+            {"params": encoder_params}, zs, actions, method=ModelBasedEncoder.__call__
         )
-        state_action = self.sale_state_action(jnp.concatenate([observations, actions], axis=-1)) 
-        state_action  = state_action/ (jnp.mean(jnp.abs(state_action), axis=-1,  keepdims=True) + 1e-6)
+        state_action = self.sale_state_action(
+            jnp.concatenate([observations, actions], axis=-1)
+        )
+        state_action = state_action / (
+            jnp.mean(jnp.abs(state_action), axis=-1, keepdims=True) + 1e-6
+        )
         # zsa, zs, key = maybe_mutate(zsa, zs, rng, training=training, p=0.25)
         zsa = jnp.concatenate([observations], axis=-1)
 
         zsa = self.norm(zsa)  # Ensure activation is applied
-        
 
         # zs_goals = self.encoder_module_def.apply(
         #     {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
         # )
         # zs_goals = self.encoder_module_def.apply(
         #     {'params': encoder_params}, zs_goals, method=ModelBasedEncoder.get_discrete_logits_zs
-        # ) 
+        # )
         # zs_goals = jnp.concatenate([goals, zs_goals], axis=-1)
         # zs_goals = self.norm_goals(zs_goals)
         zs_goals = goals
 
-        phi_output_raw = self.phi_mlp(zsa) 
+        phi_output_raw = self.phi_mlp(zsa)
         psi_output_raw = self.psi_mlp(zs_goals)
 
         num_ensembles = 2 if self.ensemble else 1
         if self.ensemble:
             # Reshape to (num_ensembles, batch, latent_dim)
-            phi_output = phi_output_raw.reshape(-1, num_ensembles, self.latent_dim).transpose(1,0,2)
-            psi_output = psi_output_raw.reshape(-1, num_ensembles, self.latent_dim).transpose(1,0,2)
+            phi_output = phi_output_raw.reshape(
+                -1, num_ensembles, self.latent_dim
+            ).transpose(1, 0, 2)
+            psi_output = psi_output_raw.reshape(
+                -1, num_ensembles, self.latent_dim
+            ).transpose(1, 0, 2)
         else:
             # Add ensemble dim: (1, batch, latent_dim)
-            phi_output = phi_output_raw[jnp.newaxis, ...] 
+            phi_output = phi_output_raw[jnp.newaxis, ...]
             psi_output = psi_output_raw[jnp.newaxis, ...]
-
 
         # einsum for ensemble: 'eik,ejk->ije' where e=ensemble, i=batch1, j=batch2, k=latent
         # Here, we do element-wise product for V(s,g) = sum(phi(s,a)_e * psi(g)_e) / sqrt(d) for each ensemble member
@@ -400,169 +547,254 @@ class GCBilinearModelBasedValue(nn.Module):
         # phi_output = l2_normalize(phi_output, axis=-1)
         # psi_output = l2_normalize(psi_output, axis=-1)
         v = jnp.sum(phi_output * psi_output, axis=-1) / jnp.sqrt(self.latent_dim)
-        
-        if not self.ensemble: # Squeeze ensemble dim if not used
+
+        if not self.ensemble:  # Squeeze ensemble dim if not used
             v = v.squeeze(axis=0)
             phi_output = phi_output.squeeze(axis=0)
             psi_output = psi_output.squeeze(axis=0)
 
-
-        if self.value_exp: v = jnp.exp(v)
+        if self.value_exp:
+            v = jnp.exp(v)
         return (v, phi_output, psi_output) if info else v
-        
+
+
 def compute_encoder_loss_core(
-    online_encoder_params: flax.core.FrozenDict, target_encoder_params: flax.core.FrozenDict,
-    encoder_module_def: ModelBasedEncoder, states: jnp.ndarray, actions: jnp.ndarray,
-    next_states: jnp.ndarray, not_done_mask: jnp.ndarray, enc_horizon: int, dyn_weight: float,
-    state_buffer=1
+    online_encoder_params: flax.core.FrozenDict,
+    target_encoder_params: flax.core.FrozenDict,
+    encoder_module_def: ModelBasedEncoder,
+    states: jnp.ndarray,
+    actions: jnp.ndarray,
+    next_states: jnp.ndarray,
+    not_done_mask: jnp.ndarray,
+    enc_horizon: int,
+    dyn_weight: float,
+    state_buffer=1,
 ):
-    batch_size = states.shape[0]; zs_dim = encoder_module_def.zs_dim; state_shape = states.shape[2:]
+    batch_size = states.shape[0]
+    zs_dim = encoder_module_def.zs_dim
+    state_shape = states.shape[2:]
     num_groups = enc_horizon - state_buffer + 1
     # Stack sliding windows and flatten last two dims
-    states_grouped = jnp.stack([states[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
+    states_grouped = jnp.stack(
+        [states[:, i : i + state_buffer, :] for i in range(num_groups)], axis=1
+    )  # shape: (1024, 9, 4, 29)
     states = states_grouped.reshape(1024, num_groups, -1)  # shape: (1024, 9, 116)
-    next_states_grouped = jnp.stack([next_states[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
-    next_states = next_states_grouped.reshape(1024, num_groups, -1)  # shape: (1024, 9, 116)
-    actions_grouped = jnp.stack([actions[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
-    actions = actions_grouped.reshape(1024, num_groups, -1) 
-    # flat_next_states = next_states.reshape(-1, *state_shape) 
-
+    next_states_grouped = jnp.stack(
+        [next_states[:, i : i + state_buffer, :] for i in range(num_groups)], axis=1
+    )  # shape: (1024, 9, 4, 29)
+    next_states = next_states_grouped.reshape(
+        1024, num_groups, -1
+    )  # shape: (1024, 9, 116)
+    actions_grouped = jnp.stack(
+        [actions[:, i : i + state_buffer, :] for i in range(num_groups)], axis=1
+    )  # shape: (1024, 9, 4, 29)
+    actions = actions_grouped.reshape(1024, num_groups, -1)
+    # flat_next_states = next_states.reshape(-1, *state_shape)
 
     target_zs_horizon = encoder_module_def.apply(
-        {'params': target_encoder_params}, next_states, method=ModelBasedEncoder.encode_state
+        {"params": target_encoder_params},
+        next_states,
+        method=ModelBasedEncoder.encode_state,
     )
     target_zs_horizon = encoder_module_def.apply(
-        {'params': target_encoder_params}, target_zs_horizon, method=ModelBasedEncoder.get_discrete_logits_zs
+        {"params": target_encoder_params},
+        target_zs_horizon,
+        method=ModelBasedEncoder.get_discrete_logits_zs,
     )
-    initial_states_for_online_encoder = states[:, 0] 
+    initial_states_for_online_encoder = states[:, 0]
     current_pred_zs = encoder_module_def.apply(
-        {'params': online_encoder_params}, initial_states_for_online_encoder, method=ModelBasedEncoder.encode_state
+        {"params": online_encoder_params},
+        initial_states_for_online_encoder,
+        method=ModelBasedEncoder.encode_state,
     )
+
     def loop_body(carry_pred_zs, i):
-        action_step = actions[:, i]; 
+        action_step = actions[:, i]
         target_zs_step = target_zs_horizon[:, i, :]
         next_predicted_latent_state = encoder_module_def.apply(
-            {'params': online_encoder_params}, carry_pred_zs, action_step, method=ModelBasedEncoder.next_zs 
+            {"params": online_encoder_params},
+            carry_pred_zs,
+            action_step,
+            method=ModelBasedEncoder.next_zs,
         )
         next_predicted_state = encoder_module_def.apply(
-            {'params': online_encoder_params}, next_predicted_latent_state, method=ModelBasedEncoder.get_discrete_logits_zs
+            {"params": online_encoder_params},
+            next_predicted_latent_state,
+            method=ModelBasedEncoder.get_discrete_logits_zs,
         )
         step_dyn_loss = jnp.mean(jnp.square(next_predicted_state - target_zs_step))
         return next_predicted_latent_state, step_dyn_loss
-    final_pred_zs, dyn_losses_per_step = jax.lax.scan(loop_body, current_pred_zs, jnp.arange(enc_horizon))
-    total_encoder_loss = jnp.sum(dyn_losses_per_step) * dyn_weight 
+
+    final_pred_zs, dyn_losses_per_step = jax.lax.scan(
+        loop_body, current_pred_zs, jnp.arange(enc_horizon)
+    )
+    total_encoder_loss = jnp.sum(dyn_losses_per_step) * dyn_weight
     avg_dyn_loss_per_step = jnp.mean(dyn_losses_per_step)
-    return avg_dyn_loss_per_step, {'encoder_loss_total': total_encoder_loss, 'encoder_avg_step_mse': avg_dyn_loss_per_step}
+    return avg_dyn_loss_per_step, {
+        "encoder_loss_total": total_encoder_loss,
+        "encoder_avg_step_mse": avg_dyn_loss_per_step,
+    }
+
 
 def compute_state_encoder_loss_core(
-    online_encoder_params: flax.core.FrozenDict, target_encoder_params: flax.core.FrozenDict,
-    encoder_module_def: ModelBasedEncoder, states: jnp.ndarray, actions: jnp.ndarray,
-    teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
+    online_encoder_params: flax.core.FrozenDict,
+    target_encoder_params: flax.core.FrozenDict,
+    encoder_module_def: ModelBasedEncoder,
+    states: jnp.ndarray,
+    actions: jnp.ndarray,
+    teacher_center: jnp.ndarray,  # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
     teacher_temp: float = 0.2,
     student_temp: float = 1.0,
 ):
-    batch_size = states.shape[0]; zs_dim = encoder_module_def.zs_dim; state_shape = states.shape[2:]
-    # flat_next_states = next_states.reshape(-1, *state_shape) 
+    batch_size = states.shape[0]
+    zs_dim = encoder_module_def.zs_dim
+    state_shape = states.shape[2:]
+    # flat_next_states = next_states.reshape(-1, *state_shape)
     target_zs = encoder_module_def.apply(
-        {'params': target_encoder_params}, states, method=ModelBasedEncoder.encode_state
+        {"params": target_encoder_params}, states, method=ModelBasedEncoder.encode_state
     )
     target_zs = encoder_module_def.apply(
-        {'params': target_encoder_params}, target_zs, method=ModelBasedEncoder.get_discrete_logits_zs
+        {"params": target_encoder_params},
+        target_zs,
+        method=ModelBasedEncoder.get_discrete_logits_zs,
     )
-    centered_target_logits = target_zs - teacher_center # Broadcasting teacher_center
+    centered_target_logits = target_zs - teacher_center  # Broadcasting teacher_center
     p_target_horizon = jax.nn.softmax(centered_target_logits / teacher_temp, axis=-1)
-    p_target_horizon = jax.lax.stop_gradient(p_target_horizon) # Teacher targets are fixed
+    p_target_horizon = jax.lax.stop_gradient(
+        p_target_horizon
+    )  # Teacher targets are fixed
 
     pred_zs = encoder_module_def.apply(
-        {'params': online_encoder_params}, states, method=ModelBasedEncoder.encode_state
+        {"params": online_encoder_params}, states, method=ModelBasedEncoder.encode_state
     )
     pred_zs = encoder_module_def.apply(
-        {'params': online_encoder_params}, pred_zs, method=ModelBasedEncoder.get_discrete_logits_zs
-        )
+        {"params": online_encoder_params},
+        pred_zs,
+        method=ModelBasedEncoder.get_discrete_logits_zs,
+    )
 
     log_p_student_step = jax.nn.log_softmax(pred_zs / student_temp, axis=-1)
 
-    step_ce_loss = -jnp.sum(p_target_horizon * log_p_student_step, axis=-1) # Sum over bins
-    average_dyn_loss = jnp.mean(step_ce_loss) 
-    total_dyn_loss = jnp.sum(step_ce_loss) 
-    return average_dyn_loss, {'encoder_loss_total': total_dyn_loss, 'encoder_avg_step_mse': average_dyn_loss}
+    step_ce_loss = -jnp.sum(
+        p_target_horizon * log_p_student_step, axis=-1
+    )  # Sum over bins
+    average_dyn_loss = jnp.mean(step_ce_loss)
+    total_dyn_loss = jnp.sum(step_ce_loss)
+    return average_dyn_loss, {
+        "encoder_loss_total": total_dyn_loss,
+        "encoder_avg_step_mse": average_dyn_loss,
+    }
+
 
 # Modified loss function for DINO-style training
 def compute_dino_style_encoder_loss_core(
     online_encoder_params: flax.core.FrozenDict,
-    target_encoder_params: flax.core.FrozenDict, # EMA of online_encoder_params
+    target_encoder_params: flax.core.FrozenDict,  # EMA of online_encoder_params
     encoder_module_def: ModelBasedEncoder,
     states: jnp.ndarray,  # Shape: (batch_size, horizon + 1, *state_shape)
-    actions: jnp.ndarray, # Shape: (batch_size, horizon, action_dim)
+    actions: jnp.ndarray,  # Shape: (batch_size, horizon, action_dim)
     # next_states is implicitly states[:, 1:]
     # not_done_mask: jnp.ndarray, # Shape: (batch_size, horizon) - can be used to mask loss
-    rewards: jnp.ndarray, # Shape: (batch_size, horizon) - can be used to mask loss
+    rewards: jnp.ndarray,  # Shape: (batch_size, horizon) - can be used to mask loss
     enc_horizon: int,
-    dyn_weight: float, # Weight for the overall dynamics distillation loss
-    teacher_center: jnp.ndarray, # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
-    state_buffer, 
+    dyn_weight: float,  # Weight for the overall dynamics distillation loss
+    teacher_center: jnp.ndarray,  # Shape: (num_bins,) or (1, num_bins) - EMA of teacher logits
+    state_buffer,
     teacher_temp: float = 0.04,
     student_temp: float = 1.0,
-    key: Optional[jax.random.PRNGKey] = None, # For any stochastic ops if needed (not for this CE loss)
+    key: Optional[
+        jax.random.PRNGKey
+    ] = None,  # For any stochastic ops if needed (not for this CE loss)
     next_states=None,
 ):
     num_groups = enc_horizon - state_buffer + 1
     # Stack sliding windows and flatten last two dims
-    states_grouped = jnp.stack([states[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
+    states_grouped = jnp.stack(
+        [states[:, i : i + state_buffer, :] for i in range(num_groups)], axis=1
+    )  # shape: (1024, 9, 4, 29)
     states = states_grouped.reshape(1024, num_groups, -1)  # shape: (1024, 9, 116)
-    next_states_grouped = jnp.stack([next_states[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
-    next_states = next_states_grouped.reshape(1024, num_groups, -1)  # shape: (1024, 9, 116)
-    actions_grouped = jnp.stack([actions[:, i:i+state_buffer, :] for i in range(num_groups)], axis=1)  # shape: (1024, 9, 4, 29)
-    actions = actions_grouped.reshape(1024, num_groups, -1) 
+    next_states_grouped = jnp.stack(
+        [next_states[:, i : i + state_buffer, :] for i in range(num_groups)], axis=1
+    )  # shape: (1024, 9, 4, 29)
+    next_states = next_states_grouped.reshape(
+        1024, num_groups, -1
+    )  # shape: (1024, 9, 116)
+    actions_grouped = jnp.stack(
+        [actions[:, i : i + state_buffer, :] for i in range(num_groups)], axis=1
+    )  # shape: (1024, 9, 4, 29)
+    actions = actions_grouped.reshape(1024, num_groups, -1)
 
     target_zs_horizon = encoder_module_def.apply(
-        {'params': target_encoder_params}, next_states, method=ModelBasedEncoder.encode_state
+        {"params": target_encoder_params},
+        next_states,
+        method=ModelBasedEncoder.encode_state,
     )
     target_logits_horizon = encoder_module_def.apply(
-        {'params': target_encoder_params}, target_zs_horizon, method=ModelBasedEncoder.get_discrete_logits_zs
+        {"params": target_encoder_params},
+        target_zs_horizon,
+        method=ModelBasedEncoder.get_discrete_logits_zs,
     )
 
-    current_batch_avg_teacher_logits = jnp.mean(target_logits_horizon, axis=(0, 1)) # Shape: (num_bins,)
-    current_batch_avg_teacher_logits = jax.lax.stop_gradient(current_batch_avg_teacher_logits)
+    current_batch_avg_teacher_logits = jnp.mean(
+        target_logits_horizon, axis=(0, 1)
+    )  # Shape: (num_bins,)
+    current_batch_avg_teacher_logits = jax.lax.stop_gradient(
+        current_batch_avg_teacher_logits
+    )
 
-    initial_states_for_online_encoder = states[:, 0] 
+    initial_states_for_online_encoder = states[:, 0]
     current_pred_zs_continuous = encoder_module_def.apply(
-        {'params': online_encoder_params}, initial_states_for_online_encoder, method=ModelBasedEncoder.encode_state
+        {"params": online_encoder_params},
+        initial_states_for_online_encoder,
+        method=ModelBasedEncoder.encode_state,
     )
 
-    centered_target_logits = target_logits_horizon - teacher_center # Broadcasting teacher_center
-    
+    centered_target_logits = (
+        target_logits_horizon - teacher_center
+    )  # Broadcasting teacher_center
+
     # p_target_horizon will be (batch_size, horizon, num_bins)
     p_target_horizon = jax.nn.softmax(centered_target_logits / teacher_temp, axis=-1)
-    p_target_horizon = jax.lax.stop_gradient(p_target_horizon) # Teacher targets are fixed
+    p_target_horizon = jax.lax.stop_gradient(
+        p_target_horizon
+    )  # Teacher targets are fixed
 
     def loop_body(carry_pred_zs_continuous, i):
         # carry_pred_zs_continuous is student's current continuous latent state z^_t
-        action_step = actions[:, i] # a_t
-        
+        action_step = actions[:, i]  # a_t
+
         # Student predicts delta for next continuous state based on its z^_t and a_t
         pred_next_zs_continuous = encoder_module_def.apply(
-            {'params': online_encoder_params}, carry_pred_zs_continuous, action_step, method=ModelBasedEncoder.next_zs
-        )        
+            {"params": online_encoder_params},
+            carry_pred_zs_continuous,
+            action_step,
+            method=ModelBasedEncoder.next_zs,
+        )
         # Student converts its predicted z^_{t+1} to logits
         student_logits_step = encoder_module_def.apply(
-            {'params': online_encoder_params}, pred_next_zs_continuous, method=ModelBasedEncoder.get_discrete_logits_zs
+            {"params": online_encoder_params},
+            pred_next_zs_continuous,
+            method=ModelBasedEncoder.get_discrete_logits_zs,
         )
-        
+
         # Student converts its predicted z^_{t+1} to logits
         # reward_logits_step = encoder_module_def.apply(
         #     {'params': online_encoder_params}, carry_pred_zs_continuous, method=ModelBasedEncoder.get_rewards
         # )
 
         # Target probabilities for this step
-        p_target_step = p_target_horizon[:, i, :] # Shape: (batch_size, num_bins)
-        
+        p_target_step = p_target_horizon[:, i, :]  # Shape: (batch_size, num_bins)
+
         # Cross-entropy loss for the current step
         # H(p_target, p_student) = - sum(p_target * log_softmax(student_logits / student_temp))
-        log_p_student_step = jax.nn.log_softmax(student_logits_step / student_temp, axis=-1)
-        step_ce_loss = -jnp.sum(p_target_step * log_p_student_step, axis=-1) # Sum over bins
-        mean_step_ce_loss = jnp.mean(step_ce_loss) # Mean over batch
-        
+        log_p_student_step = jax.nn.log_softmax(
+            student_logits_step / student_temp, axis=-1
+        )
+        step_ce_loss = -jnp.sum(
+            p_target_step * log_p_student_step, axis=-1
+        )  # Sum over bins
+        mean_step_ce_loss = jnp.mean(step_ce_loss)  # Mean over batch
+
         # log_p_student_step = jax.nn.log_softmax(reward_logits_step, axis=-1)
         # step_reward_loss = binary_cross_entropy_from_logits(logits=reward_logits_step, labels=rewards[:,i])
         # mean_step_ce_loss += jnp.mean(step_reward_loss)*0.1 # Mean over batch
@@ -576,10 +808,12 @@ def compute_dino_style_encoder_loss_core(
     final_pred_zs_continuous, ce_losses_per_step = jax.lax.scan(
         loop_body, current_pred_zs_continuous, jnp.arange(num_groups)
     )
-    
+
     # Total loss is the sum of mean per-step losses, scaled by dyn_weight
     total_encoder_loss = jnp.sum(ce_losses_per_step) * dyn_weight
-    avg_ce_loss_per_step = jnp.mean(ce_losses_per_step) # Average of the mean per-step losses
+    avg_ce_loss_per_step = jnp.mean(
+        ce_losses_per_step
+    )  # Average of the mean per-step losses
 
     # Assume final_pred_zs_continuous has shape (B, 512)
     # X = final_pred_zs_continuous
@@ -605,16 +839,23 @@ def compute_dino_style_encoder_loss_core(
     # matrix_entropy = calc_matrix_entropy(X)
 
     return total_encoder_loss, {
-        'encoder_loss_total': total_encoder_loss,
-        'encoder_avg_step_ce': avg_ce_loss_per_step,
-        'max_final_zs': jnp.max(final_pred_zs_continuous), # Max norm of final predicted zs
-        'min_final_zs': jnp.min(final_pred_zs_continuous), # Min norm of final predicted zs
-        'mean_final_zs': jnp.mean(final_pred_zs_continuous), # Mean norm of final predicted zs
-        'rank': jnp.mean(final_pred_zs_continuous), # Mean norm of final predicted zs
-        'std_final_zs': jnp.std(final_pred_zs_continuous), # Std norm of final predicted zs
-        'ce_losses_per_step': ce_losses_per_step, # For logging if desired
-        'current_batch_avg_teacher_logits': current_batch_avg_teacher_logits,
-
+        "encoder_loss_total": total_encoder_loss,
+        "encoder_avg_step_ce": avg_ce_loss_per_step,
+        "max_final_zs": jnp.max(
+            final_pred_zs_continuous
+        ),  # Max norm of final predicted zs
+        "min_final_zs": jnp.min(
+            final_pred_zs_continuous
+        ),  # Min norm of final predicted zs
+        "mean_final_zs": jnp.mean(
+            final_pred_zs_continuous
+        ),  # Mean norm of final predicted zs
+        "rank": jnp.mean(final_pred_zs_continuous),  # Mean norm of final predicted zs
+        "std_final_zs": jnp.std(
+            final_pred_zs_continuous
+        ),  # Std norm of final predicted zs
+        "ce_losses_per_step": ce_losses_per_step,  # For logging if desired
+        "current_batch_avg_teacher_logits": current_batch_avg_teacher_logits,
         # 'matrix_entropy': matrix_entropy,
         # 'mean_l2_norm': mean_l2_norm,
         # 'avg_variance_per_dim': avg_var,
@@ -631,14 +872,16 @@ def compute_dino_style_encoder_loss_core(
         # 'effective_rank': effective_rank,
     }
 
+
 import jax
 import jax.numpy as jnp
+
 
 def calc_matrix_entropy(Z: jnp.ndarray, alpha: float = 1.0) -> float:
     """
     Computes matrix-based entropy S_α(Z) given input Z of shape (N, D).
     Z is typically a batch of token embeddings.
-    
+
     Args:
         Z: jnp.ndarray of shape (N, D) where N is batch size, D is embedding dim
         alpha: entropy order (α > 0). Use α=1 for von Neumann entropy.
@@ -664,25 +907,29 @@ def calc_matrix_entropy(Z: jnp.ndarray, alpha: float = 1.0) -> float:
         entropy = -jnp.sum(p * jnp.log(p))
     else:
         # Rényi entropy of order α
-        entropy = (1.0 / (1.0 - alpha)) * jnp.log(jnp.sum(p ** alpha))
+        entropy = (1.0 / (1.0 - alpha)) * jnp.log(jnp.sum(p**alpha))
 
     return entropy
+
 
 def binary_cross_entropy_from_logits(logits, labels):
     log_probs = jax.nn.log_softmax(logits)
     labels = labels.astype(jnp.int32)
     return -jnp.take_along_axis(log_probs, labels[:, None], axis=1).squeeze()
 
+
 def sample_gumbel(key, shape, eps=1e-20):
     """Sample from Gumbel(0, 1)"""
     u = jax.random.uniform(key, shape=shape, minval=0, maxval=1)
     return -jnp.log(-jnp.log(u + eps) + eps)
+
 
 def gumbel_softmax_sample(logits, tau, key):
     """Draw a sample from the Gumbel-Softmax distribution"""
     gumbel_noise = sample_gumbel(key, logits.shape)
     y = logits + gumbel_noise
     return jax.nn.softmax(y / tau, axis=-1)
+
 
 def gumbel_softmax(logits, tau=1.0, key=None, hard=False):
     """Gumbel-Softmax: differentiable sampling from a categorical"""
@@ -694,14 +941,27 @@ def gumbel_softmax(logits, tau=1.0, key=None, hard=False):
     else:
         y = y_soft
     return y
+
+
 def l2_normalize(x, axis=-1, eps=1e-8):
     norm = jnp.linalg.norm(x, axis=axis, keepdims=True)
     return x / (norm + eps)
+
+
 # Example Usage (no changes needed here for the fix)
-if __name__ == '__main__':
+if __name__ == "__main__":
     key = jax.random.PRNGKey(0)
-    key_params_mlp_base_init, key_params_encoder_mlp, key_params_encoder_cnn, \
-    key_params_policy_d, key_params_policy_c, key_params_value, key_gumbel = jax.random.split(key, 7) # Adjusted key split
+    (
+        key_params_mlp_base_init,
+        key_params_encoder_mlp,
+        key_params_encoder_cnn,
+        key_params_policy_d,
+        key_params_policy_c,
+        key_params_value,
+        key_gumbel,
+    ) = jax.random.split(
+        key, 7
+    )  # Adjusted key split
 
     # --- BaseMLP Example ---
     print("--- BaseMLP Example ---")
@@ -713,59 +973,99 @@ if __name__ == '__main__':
 
     # --- ModelBasedEncoder Example (MLP) ---
     print("\n--- ModelBasedEncoder Example (MLP) ---")
-    encoder_mlp = ModelBasedEncoder(action_dim=4, pixel_obs=False, state_feature_dim=128, 
-                          zs_dim=256, za_dim=64, zsa_dim=256, hdim=128)
+    encoder_mlp = ModelBasedEncoder(
+        action_dim=4,
+        pixel_obs=False,
+        state_feature_dim=128,
+        zs_dim=256,
+        za_dim=64,
+        zsa_dim=256,
+        hdim=128,
+    )
     dummy_state_mlp = jnp.ones((2, 128))
     dummy_action_enc = jnp.ones((2, 4))
-    
+
     variables_encoder_mlp = encoder_mlp.init(
-        key_params_encoder_mlp, dummy_state_mlp, dummy_action_enc, method=ModelBasedEncoder._init_all_paths
+        key_params_encoder_mlp,
+        dummy_state_mlp,
+        dummy_action_enc,
+        method=ModelBasedEncoder._init_all_paths,
     )
 
-    zs_from_mlp_state = encoder_mlp.apply(variables_encoder_mlp, dummy_state_mlp, method=encoder_mlp.encode_state)
+    zs_from_mlp_state = encoder_mlp.apply(
+        variables_encoder_mlp, dummy_state_mlp, method=encoder_mlp.encode_state
+    )
     print("zs from MLP state shape:", zs_from_mlp_state.shape)
 
-    zsa_output_mlp = encoder_mlp.apply(variables_encoder_mlp, zs_from_mlp_state, dummy_action_enc)
+    zsa_output_mlp = encoder_mlp.apply(
+        variables_encoder_mlp, zs_from_mlp_state, dummy_action_enc
+    )
     print("ModelBasedEncoder (MLP) zsa output shape:", zsa_output_mlp.shape)
-    
+
     done_mlp, next_zs_delta_mlp, reward_logits_mlp = encoder_mlp.apply(
-        variables_encoder_mlp, zs_from_mlp_state, dummy_action_enc, method=encoder_mlp.next_zs
+        variables_encoder_mlp,
+        zs_from_mlp_state,
+        dummy_action_enc,
+        method=encoder_mlp.next_zs,
     )
     print("ModelBasedEncoder (MLP) done shape:", done_mlp.shape)
     print("ModelBasedEncoder (MLP) next_zs_delta shape:", next_zs_delta_mlp.shape)
     print("ModelBasedEncoder (MLP) reward_logits shape:", reward_logits_mlp.shape)
 
-
     print("\n--- ModelBasedEncoder Example (CNN) ---")
-    encoder_cnn = ModelBasedEncoder(action_dim=4, pixel_obs=True, cnn_input_channels=3, 
-                          zs_dim=256, za_dim=64, zsa_dim=256, hdim=128,
-                          cnn_flat_size=8192)
+    encoder_cnn = ModelBasedEncoder(
+        action_dim=4,
+        pixel_obs=True,
+        cnn_input_channels=3,
+        zs_dim=256,
+        za_dim=64,
+        zsa_dim=256,
+        hdim=128,
+        cnn_flat_size=8192,
+    )
     dummy_state_cnn = jnp.ones((2, 128, 128, 3))
-    
+
     variables_encoder_cnn = encoder_cnn.init(
-        key_params_encoder_cnn, dummy_state_cnn, dummy_action_enc, method=ModelBasedModelBasedEncoder._init_all_paths
+        key_params_encoder_cnn,
+        dummy_state_cnn,
+        dummy_action_enc,
+        method=ModelBasedModelBasedEncoder._init_all_paths,
     )
 
-    zs_from_cnn_state = encoder_cnn.apply(variables_encoder_cnn, dummy_state_cnn, method=encoder_cnn.encode_state)
+    zs_from_cnn_state = encoder_cnn.apply(
+        variables_encoder_cnn, dummy_state_cnn, method=encoder_cnn.encode_state
+    )
     print("zs from CNN state shape:", zs_from_cnn_state.shape)
 
-    zsa_output_cnn = encoder_cnn.apply(variables_encoder_cnn, zs_from_cnn_state, dummy_action_enc)
+    zsa_output_cnn = encoder_cnn.apply(
+        variables_encoder_cnn, zs_from_cnn_state, dummy_action_enc
+    )
     print("ModelBasedModelBasedEncoder (CNN) zsa output shape:", zsa_output_cnn.shape)
 
     done_cnn, next_zs_delta_cnn, reward_logits_cnn = encoder_cnn.apply(
-        variables_encoder_cnn, zs_from_cnn_state, dummy_action_enc, method=encoder_cnn.next_zs
+        variables_encoder_cnn,
+        zs_from_cnn_state,
+        dummy_action_enc,
+        method=encoder_cnn.next_zs,
     )
     print("ModelBasedModelBasedEncoder (CNN) done shape:", done_cnn.shape)
-    print("ModelBasedModelBasedEncoder (CNN) next_zs_delta shape:", next_zs_delta_cnn.shape)
-    print("ModelBasedModelBasedEncoder (CNN) reward_logits shape:", reward_logits_cnn.shape)
-
+    print(
+        "ModelBasedModelBasedEncoder (CNN) next_zs_delta shape:",
+        next_zs_delta_cnn.shape,
+    )
+    print(
+        "ModelBasedModelBasedEncoder (CNN) reward_logits shape:",
+        reward_logits_cnn.shape,
+    )
 
     print("\n--- Policy Example (Discrete) ---")
     policy_discrete = Policy(action_dim=5, discrete=True, hdim=128)
-    dummy_zs_policy = zs_from_cnn_state # Using output from CNN encoder example
+    dummy_zs_policy = zs_from_cnn_state  # Using output from CNN encoder example
 
-    variables_policy_discrete = policy_discrete.init(key_params_policy_d, dummy_zs_policy, training=True, rng_key=key_gumbel)
-    
+    variables_policy_discrete = policy_discrete.init(
+        key_params_policy_d, dummy_zs_policy, training=True, rng_key=key_gumbel
+    )
+
     action_discrete, pre_activ_discrete = policy_discrete.apply(
         variables_policy_discrete, dummy_zs_policy, training=True, rng_key=key_gumbel
     )
@@ -773,28 +1073,39 @@ if __name__ == '__main__':
     print("Policy (Discrete) Training Pre-activation shape:", pre_activ_discrete.shape)
 
     eval_action_discrete, _ = policy_discrete.apply(
-        variables_policy_discrete, dummy_zs_policy, training=False # No rng_key needed if training=False and Gumbel is not used
+        variables_policy_discrete,
+        dummy_zs_policy,
+        training=False,  # No rng_key needed if training=False and Gumbel is not used
     )
     print("Policy (Discrete) Eval Action shape (Softmax):", eval_action_discrete.shape)
-    
-    act_eval_action_discrete = policy_discrete.apply(
-        variables_policy_discrete, dummy_zs_policy, training=False, method=policy_discrete.act
-    )
-    print("Policy (Discrete) 'act' (training=False) shape:", act_eval_action_discrete.shape)
 
+    act_eval_action_discrete = policy_discrete.apply(
+        variables_policy_discrete,
+        dummy_zs_policy,
+        training=False,
+        method=policy_discrete.act,
+    )
+    print(
+        "Policy (Discrete) 'act' (training=False) shape:",
+        act_eval_action_discrete.shape,
+    )
 
     print("\n--- Policy Example (Continuous) ---")
     policy_continuous = Policy(action_dim=3, discrete=False, hdim=128)
-    variables_policy_continuous = policy_continuous.init(key_params_policy_c, dummy_zs_policy)
-    
-    action_continuous, pre_activ_continuous = policy_continuous.apply(variables_policy_continuous, dummy_zs_policy)
+    variables_policy_continuous = policy_continuous.init(
+        key_params_policy_c, dummy_zs_policy
+    )
+
+    action_continuous, pre_activ_continuous = policy_continuous.apply(
+        variables_policy_continuous, dummy_zs_policy
+    )
     print("Policy (Continuous) Action shape:", action_continuous.shape)
     print("Policy (Continuous) Pre-activation shape:", pre_activ_continuous.shape)
 
     print("\n--- Value Function Example ---")
     value_fn = Value(hdim=128)
-    dummy_zsa_value = zsa_output_cnn # Using output from CNN encoder example
+    dummy_zsa_value = zsa_output_cnn  # Using output from CNN encoder example
     variables_value = value_fn.init(key_params_value, dummy_zsa_value)
-    
+
     q_values = value_fn.apply(variables_value, dummy_zsa_value)
     print("Value Function Output (Q1, Q2) shape:", q_values.shape)
