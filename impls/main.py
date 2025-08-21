@@ -125,9 +125,9 @@ def main(_):
             update_info.update(rl_info)
             if i % 500 == 0:
                 pass
-                agent = agent.update_encoder_target_hard(i)
+                agent = agent.update_encoder_target_soft(i)
         else:
-            agent = agent.update_encoder_target_hard(i)
+            agent = agent.update_encoder_target_soft(i)
 
         progress_bar.update(1)
         i += 1
