@@ -334,10 +334,10 @@ class GCBilinearModelBasedValue(nn.Module):
 
         phi = self.phi_mlp(phi_inputs)
 
-        # zs_goals = self.encoder_module_def.apply(
-        #     {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
-        # )
-        psi_inputs = jnp.concatenate([goals], axis=-1) # zs_goals
+        zs_goals = self.encoder_module_def.apply(
+            {'params': encoder_params}, goals, method=ModelBasedEncoder.encode_state
+        )
+        psi_inputs = jnp.concatenate([goals, zs_goals], axis=-1) # zs_goals
         psi = self.psi_mlp(psi_inputs)
 
         v = (phi * psi / jnp.sqrt(self.latent_dim)).sum(axis=-1)
