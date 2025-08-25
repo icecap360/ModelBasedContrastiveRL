@@ -330,7 +330,7 @@ class GCBilinearModelBasedValue(nn.Module):
             #     {'params': encoder_params}, zsa, method=ModelBasedEncoder.get_discrete_logits_zs
             # )
             # zsa_discrete = jax.nn.softmax(zsa_head, axis=-1)
-            phi_inputs = jnp.concatenate([observations, actions, zs, zsa], axis=-1)
+            phi_inputs = jnp.concatenate([zs, zsa], axis=-1)
 
         phi = self.phi_mlp(phi_inputs)
 
