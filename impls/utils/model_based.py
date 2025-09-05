@@ -316,21 +316,21 @@ class GCBilinearModelBasedValue(nn.Module):
         if actions is None:
             phi_inputs = observations
         else:
-            zs = self.encoder_module_def.apply(
-                {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
-            )
+            # zs = self.encoder_module_def.apply(
+            #     {'params': encoder_params}, observations, method=ModelBasedEncoder.encode_state
+            # )
             # zs_head = self.encoder_module_def.apply(
             #     {'params': encoder_params}, zs, method=ModelBasedEncoder.get_discrete_logits_zs
             # )
             # zs_discrete = jax.nn.softmax(zs_head, axis=-1)
-            zsa = self.encoder_module_def.apply(
-                {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.next_zs
-            )
+            # zsa = self.encoder_module_def.apply(
+            #     {'params': encoder_params}, zs, actions, method=ModelBasedEncoder.next_zs
+            # )
             # zsa_head = self.encoder_module_def.apply(
             #     {'params': encoder_params}, zsa, method=ModelBasedEncoder.get_discrete_logits_zs
             # )
             # zsa_discrete = jax.nn.softmax(zsa_head, axis=-1)
-            phi_inputs = jnp.concatenate([observations, actions, zs, zsa], axis=-1)
+            phi_inputs = jnp.concatenate([observations, actions], axis=-1)
 
         phi = self.phi_mlp(phi_inputs)
 
