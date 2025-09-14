@@ -104,11 +104,11 @@ def main(_):
     first_time = time.time()
     last_time = time.time()
     
-    progress_bar = tqdm.tqdm(total=FLAGS.train_steps, smoothing=0.1, dynamic_ncols=True)
+    warmup = 75_000
+    progress_bar = tqdm.tqdm(total=FLAGS.train_steps + warmup, smoothing=0.1, dynamic_ncols=True)
     i = 0
     batch_queue = []
-    warmup = 50_000
-    while i <= FLAGS.train_steps:
+    while i <= FLAGS.train_steps + warmup:
         # CRL Main Loop
         # batch = train_dataset.sample(config['batch_size'])
         # agent, update_info = agent.update(batch)
@@ -118,16 +118,17 @@ def main(_):
         # Update agent.
         batch = train_dataset.sample(config['batch_size'])
         update_info = {}
-        agent, update_info = agent.update_encoder(batch, i)
         
         if i > warmup:
+            # agent, update_info = agent.update_encoder(batch, i)
             agent, rl_info = agent.update(batch, step=i-warmup)
             update_info.update(rl_info)
             if i % 500 == 0:
-                pass
                 agent = agent.update_encoder_target_hard(i)
         else:
-            agent = agent.update_encoder_target_hard(i)
+            agent, update_info = agent.update_encoder(batch, i)
+            if i % 500 == 0:
+                agent = agent.update_encoder_target_hard(i)
 
         progress_bar.update(1)
         i += 1
